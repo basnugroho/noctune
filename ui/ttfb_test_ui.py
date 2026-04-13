@@ -2102,7 +2102,7 @@ HTML_TEMPLATE = """
         
         // Reset config to defaults
         function resetToDefaults() {
-            document.getElementById('targets').value = 'https://www.instagram.com\nhttps://qt-google-cloud-cdn.bronze.systems';
+            document.getElementById('targets').value = 'https://www.instagram.com\\nhttps://qt-google-cloud-cdn.bronze.systems';
             document.getElementById('sample-count').value = 10;
             document.getElementById('delay-seconds').value = 30;
             document.getElementById('ping-duration').value = 60;
