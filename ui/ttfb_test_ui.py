@@ -244,6 +244,13 @@ def add_log(message: str, level: str = 'info'):
         'level': level,
         'message': message
     })
+    # Mirror to terminal
+    if level == 'divider':
+        print(f'  {"─" * 50}')
+    elif message:
+        level_icons = {'info': 'ℹ️', 'success': '✅', 'warning': '⚠️', 'error': '❌'}
+        icon = level_icons.get(level, ' ')
+        print(f'  {icon}  {message}')
 
 
 def measure_ttfb(url: str) -> dict:
@@ -758,8 +765,12 @@ def run_tests(config: dict):
                     return
                 
                 # Check for pause
+                if test_paused:
+                    print(f'  ⏸️  Test paused...')
                 while test_paused and not test_stopped:
                     time.sleep(0.5)
+                if not test_paused and not test_stopped and sample_num > 1:
+                    pass  # resumed message handled by POST handler
                 
                 result = measure_ttfb(target_url)
                 result['sample_num'] = sample_num
@@ -786,6 +797,17 @@ def run_tests(config: dict):
                 # Update test_results for real-time display
                 test_results['ttfb_results'] = all_results
                 test_results['elapsed_seconds'] = (datetime.now() - test_results['_start_time_obj']).total_seconds()
+                
+                # Terminal progress
+                total_samples = len(targets) * sample_count
+                done = (target_idx - 1) * sample_count + sample_num
+                pct = int(done / total_samples * 100)
+                bar_len = 30
+                filled = int(bar_len * done / total_samples)
+                bar = '█' * filled + '░' * (bar_len - filled)
+                elapsed = test_results['elapsed_seconds']
+                eta = (elapsed / done * (total_samples - done)) if done > 0 else 0
+                print(f'\r  [{bar}] {pct}% ({done}/{total_samples}) ETA: {int(eta)}s  ', end='', flush=True)
                 
                 # Delay between samples
                 if sample_num < sample_count:
@@ -863,8 +885,12 @@ def run_tests(config: dict):
         test_results['end_time'] = datetime.now().isoformat()
         test_results['session_dir'] = str(current_session_dir)
         
+        # Clear progress bar line
+        print()
         add_log('', 'divider')
         add_log('✓ All tests completed!', 'success')
+        elapsed_total = (datetime.now() - test_results['_start_time_obj']).total_seconds()
+        print(f'  ⏱️  Total time: {int(elapsed_total)}s')
         
     except Exception as e:
         add_log(f"Test error: {e}", 'error')
@@ -2830,6 +2856,9 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                     # Reset control flags
                     test_paused = False
                     test_stopped = False
+                    targets = config.get('TARGETS', [])
+                    samples = config.get('SAMPLE_COUNT', 5)
+                    print(f'\n🚀 Test started: {len(targets)} target(s) × {samples} samples = {len(targets) * samples} total')
                     # Start test in background thread
                     thread = threading.Thread(target=run_tests, args=(config,), daemon=True)
                     thread.start()
@@ -2839,10 +2868,13 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
         
         elif self.path == '/api/test/pause':
             test_paused = not test_paused
+            state = '⏸️  Test PAUSED' if test_paused else '▶️  Test RESUMED'
+            print(f'\n  {state}')
             self.send_json({'success': True, 'paused': test_paused})
         
         elif self.path == '/api/test/stop':
             test_stopped = True
+            print(f'\n  ⏹️  Test STOPPED by user')
             self.send_json({'success': True})
         
         else:
