@@ -424,10 +424,37 @@ def detect_network_info() -> dict:
                     'lat': data.get('lat'),
                     'lon': data.get('lon'),
                     'isp': data.get('isp'),
-                    'ip': data.get('query')
+                    'ip': data.get('query'),
+                    'is_precise': False,
+                    'method': 'IP Geolocation'
                 }
     except:
         pass
+    
+    # Check for precise location from browser-based script
+    precise_location_file = Path(__file__).parent / "notebooks" / "precise_location.json"
+    if precise_location_file.exists():
+        try:
+            from datetime import timedelta
+            with open(precise_location_file, 'r') as f:
+                precise_data = json.load(f)
+            
+            # Check if data is recent (within last 24 hours)
+            saved_at = precise_data.get('saved_at')
+            if saved_at:
+                saved_time = datetime.fromisoformat(saved_at.replace('Z', '+00:00'))
+                if datetime.now().astimezone() - saved_time < timedelta(hours=24):
+                    # Update location with precise coordinates
+                    if info.get('location') is None:
+                        info['location'] = {}
+                    
+                    info['location']['lat'] = precise_data.get('latitude')
+                    info['location']['lon'] = precise_data.get('longitude')
+                    info['location']['accuracy'] = precise_data.get('accuracy')
+                    info['location']['is_precise'] = True
+                    info['location']['method'] = 'GPS (Browser)'
+        except:
+            pass
     
     return info
 
@@ -471,7 +498,7 @@ def run_tests(config: dict):
         if wifi_info.get('wifi_rssi') is None:
             signal_cat = 'unknown_signal'
         
-        band_short = wifi_info.get('wifi_band', 'Unknown').replace('.', '_').replace('GHz', 'G')
+        band_short = (wifi_info.get('wifi_band') or 'Unknown').replace('.', '_').replace('GHz', 'G')
         dns_short = (wifi_info.get('dns_primary') or 'UnknownDNS').replace('.', '-')
         
         session_name = f"session_{signal_cat}_{band_short}_{dns_short}_{test_results['session_id']}"
@@ -660,7 +687,7 @@ HTML_TEMPLATE = """
         .container {
             display: grid;
             grid-template-columns: 350px 1fr 400px;
-            grid-template-rows: auto 1fr;
+            grid-template-rows: auto auto 1fr;
             gap: 0;
             height: 100vh;
         }
@@ -693,6 +720,46 @@ HTML_TEMPLATE = """
         .status-badge.ready { background: rgba(76, 175, 80, 0.2); color: #81c784; }
         .status-badge.not-ready { background: rgba(244, 67, 54, 0.2); color: #e57373; }
         .status-badge.running { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
+        
+        /* Tab Bar */
+        .tab-bar {
+            grid-column: 1 / -1;
+            background: #16213e;
+            display: flex;
+            gap: 0;
+            padding: 0 24px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .tab {
+            padding: 12px 24px;
+            color: #888;
+            font-size: 0.95em;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            transition: all 0.2s;
+        }
+        .tab:hover {
+            color: #ccc;
+            background: rgba(255,255,255,0.03);
+        }
+        .tab.active {
+            color: #00d2ff;
+            border-bottom-color: #00d2ff;
+        }
+        .tab.disabled {
+            color: #555;
+            cursor: not-allowed;
+        }
+        .tab-badge {
+            display: inline-block;
+            font-size: 0.7em;
+            padding: 2px 6px;
+            border-radius: 10px;
+            margin-left: 6px;
+            background: rgba(255,255,255,0.1);
+            color: #888;
+            vertical-align: middle;
+        }
         
         /* Left Panel - Config */
         .config-panel {
@@ -878,6 +945,22 @@ HTML_TEMPLATE = """
             font-size: 0.95em;
             color: #fff;
         }
+        .loc-badge {
+            display: inline-block;
+            font-size: 0.85em;
+            padding: 1px 6px;
+            border-radius: 4px;
+            margin-left: 6px;
+            vertical-align: middle;
+        }
+        .loc-badge.precise {
+            background: rgba(76, 175, 80, 0.3);
+            color: #81c784;
+        }
+        .loc-badge.approximate {
+            background: rgba(255, 152, 0, 0.3);
+            color: #ffb74d;
+        }
         
         /* Results Summary */
         .summary-cards {
@@ -1048,13 +1131,20 @@ HTML_TEMPLATE = """
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>🔧 NOC Tune - TTFB Test</h1>
+            <h1>🔧 NOC Tune</h1>
             <div class="header-status">
                 <span class="status-badge" id="status-badge">Checking...</span>
                 <button class="btn btn-primary" id="run-test-btn" disabled onclick="runTests()">
                     <span class="btn-text">▶ Run Test</span>
                 </button>
             </div>
+        </div>
+        
+        <!-- Tab Bar -->
+        <div class="tab-bar">
+            <div class="tab active" data-tab="ttfb">TTFB Test</div>
+            <div class="tab disabled" data-tab="speed">Speed Test <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="latency">Latency Map <span class="tab-badge">Soon</span></div>
         </div>
         
         <!-- Config Panel -->
@@ -1427,7 +1517,13 @@ HTML_TEMPLATE = """
                 html += `<div class="network-item"><label>DNS</label><div class="value">${info.dns_primary}</div></div>`;
             }
             if (info.location) {
-                html += `<div class="network-item"><label>Location</label><div class="value">${info.location.city}, ${info.location.country}</div></div>`;
+                const locMethod = info.location.is_precise ? '📍 GPS' : '📍 IP';
+                const locClass = info.location.is_precise ? 'precise' : 'approximate';
+                html += `<div class="network-item"><label>Location <span class="loc-badge ${locClass}">${locMethod}</span></label><div class="value">${info.location.city}, ${info.location.country}</div></div>`;
+                if (info.location.lat && info.location.lon) {
+                    const accuracy = info.location.accuracy ? ` (±${Math.round(info.location.accuracy)}m)` : '';
+                    html += `<div class="network-item"><label>Coordinates${accuracy}</label><div class="value">${info.location.lat.toFixed(4)}, ${info.location.lon.toFixed(4)}</div></div>`;
+                }
                 html += `<div class="network-item"><label>ISP</label><div class="value">${info.location.isp}</div></div>`;
             }
             
