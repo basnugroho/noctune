@@ -1,5 +1,9 @@
 # NOC Tune - Requirements
-# Phase 1: TTFB Testing
+# Network Quality Measurement Tool
+
+# ============================================
+# Core Dependencies
+# ============================================
 
 # Jupyter Notebook
 jupyter>=1.0.0
@@ -18,9 +22,42 @@ plotly>=5.15.0
 # Progress Bar
 tqdm>=4.65.0
 
+# Excel Processing
+openpyxl>=3.1.0
+
 # Utilities
 python-dateutil>=2.8.0
 ipywidgets>=8.0.0
 
-# Optional: For advanced network analysis
+# ============================================
+# Platform-Specific: WiFi Detection
+# ============================================
+
+# macOS Only - WiFi signal detection (RSSI, channel, band)
+# Install with: pip install pyobjc-framework-CoreWLAN
+# Skip on Windows/Linux (will fail to install)
+pyobjc-framework-CoreWLAN>=10.0; sys_platform == 'darwin'
+
+# Windows Only - WiFi detection (alternative)
+# Note: pywifi is optional, netsh commands work without it
+# pywifi>=1.1.12; sys_platform == 'win32'
+
+# Linux Only - WiFi detection (alternative)
+# Note: Usually iwconfig/nmcli are available by default
+# wireless-tools is a system package, not pip
+
+# ============================================
+# Optional: Browser-based Geolocation
+# ============================================
+# For get_location.py script (precise GPS via browser)
+# These are in Python standard library, no extra install needed:
+# - http.server
+# - webbrowser
+# - json
+# - threading
+
+# ============================================
+# Optional: Advanced Network Analysis
+# ============================================
 # dnspython>=2.4.0
+# scapy>=2.5.0

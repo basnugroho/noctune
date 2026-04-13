@@ -1,0 +1,39 @@
+{
+  "session_id": "20260413_114500",
+  "session_folder": "session_good_signal_5G_192-168-111-1_20260413_114500",
+  "start_time": "2026-04-13T11:45:00.116384",
+  "system": "Darwin",
+  "detected_conditions": {
+    "signal_category": "good_signal",
+    "signal_rssi_dbm": -44,
+    "signal_threshold_dbm": -65,
+    "wifi_ssid": null,
+    "wifi_channel": 149,
+    "wifi_band": "5GHz",
+    "dns_primary": "192.168.111.1",
+    "dns_servers": [
+      "192.168.111.1"
+    ]
+  },
+  "location": {
+    "latitude": -6.18104,
+    "longitude": 106.826,
+    "city": "Jakarta",
+    "region": "Jakarta",
+    "country": "Indonesia",
+    "isp": "PT. TELKOM INDONESIA",
+    "public_ip": "118.97.180.34",
+    "detection_method": "IP Geolocation"
+  },
+  "config": {
+    "targets": [
+      "https://www.instagram.com",
+      "https://qt-google-cloud-cdn.bronze.systems"
+    ],
+    "sample_count": 10,
+    "delay_seconds": 30,
+    "ping_duration": 60,
+    "ttfb_good_ms": 600,
+    "ttfb_warning_ms": 800
+  }
+}

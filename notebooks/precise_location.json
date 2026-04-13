@@ -1,0 +1,14 @@
+{
+  "latitude": -7.2854357385056305,
+  "longitude": 112.78119022674164,
+  "accuracy": 35,
+  "altitude": 0,
+  "altitudeAccuracy": null,
+  "heading": null,
+  "speed": null,
+  "timestamp": "2026-04-13T04:49:37.522Z",
+  "method": "Browser Geolocation API",
+  "highAccuracy": true,
+  "saved_at": "2026-04-13T11:49:47.277096",
+  "source": "browser_geolocation"
+}

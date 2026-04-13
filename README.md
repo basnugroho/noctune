@@ -74,7 +74,7 @@ pip install -r requirements.txt
 jupyter notebook notebooks/
 ```
 
-Buka file `phase1_ttfb_testing.ipynb`
+Buka file `ttfb_test.ipynb`
 
 </details>
 
@@ -100,7 +100,21 @@ Buka file `phase1_ttfb_testing.ipynb`
 
 #### 2. Install Tools Tambahan (dig & curl)
 
-**Opsi A: Menggunakan Chocolatey (Rekomendasi)**
+**curl**: Sudah include di Windows 10/11 terbaru. Cek dengan `curl --version`
+
+**dig**: Pilih salah satu opsi berikut:
+
+**Opsi A: Menggunakan Winget (Rekomendasi - Paling Mudah)**
+
+1. Buka **CMD/PowerShell** sebagai **Administrator**
+2. Ketik perintah:
+   ```cmd
+   winget install ISC.BIND
+   ```
+3. Tutup CMD dan buka kembali
+4. Verifikasi: `dig -v`
+
+**Opsi B: Menggunakan Chocolatey**
 
 1. Install Chocolatey (package manager untuk Windows):
    - Buka **PowerShell sebagai Administrator**
@@ -109,14 +123,13 @@ Buka file `phase1_ttfb_testing.ipynb`
    Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
    ```
 
-2. Install dig (BIND) dan curl:
+2. Install dig (BIND):
    ```powershell
-   choco install bind-toolsonly curl -y
+   choco install bind-toolsonly -y
    ```
 
-**Opsi B: Download Manual**
-- **curl**: Sudah include di Windows 10/11 terbaru. Cek dengan `curl --version`
-- **dig**: Download BIND dari [ISC BIND](https://www.isc.org/download/) atau gunakan `nslookup` sebagai alternatif
+**Opsi C: Download Manual**
+- Download BIND dari [ISC BIND](https://www.isc.org/download/) atau gunakan `nslookup` sebagai alternatif
 
 #### 3. Setup Virtual Environment
 
@@ -147,7 +160,7 @@ pip install -r requirements.txt
 jupyter notebook notebooks/
 ```
 
-Buka file `phase1_ttfb_testing.ipynb` di browser yang terbuka otomatis.
+Buka file `ttfb_test.ipynb` di browser yang terbuka otomatis.
 
 #### Troubleshooting Windows
 
@@ -169,9 +182,14 @@ noc_tune/
 ├── .gitignore                      # Git ignore rules
 ├── venv/                           # Virtual environment (gitignore)
 ├── notebooks/                      # 📓 Jupyter notebooks
-│   └── phase1_ttfb_testing.ipynb   # Notebook Phase 1: TTFB Testing
-├── results/                        # Output CSV hasil pengujian
-│   └── noctune_*.csv               # Format: noctune_{type}_{timestamp}.csv
+│   ├── ttfb_test.ipynb             # Notebook TTFB Testing (adaptive)
+│   ├── config.txt                  # Konfigurasi test
+│   └── results/                    # Hasil test per session
+│       └── session_{signal}_{band}_{dns}_{timestamp}/
+│           ├── session_info.json
+│           ├── all_results_*.csv
+│           ├── summary_*.csv
+│           └── analysis_chart_*.png
 └── docs/                           # Dokumentasi tambahan
     └── TTFB_troubleshooting.pdf    # Referensi metodologi
 ```
@@ -180,20 +198,49 @@ noc_tune/
 
 ## 📊 Fase 1: TTFB Testing
 
-### Fitur Notebook
-- **Multi-sample testing**: Jalankan test N kali dengan delay yang dapat diatur
-- **Multiple DNS servers**: Bandingkan Google DNS (8.8.8.8) vs ISP DNS
-- **Multiple endpoints**: Instagram, GCP CDN, dan custom domain
-- **Auto-export CSV**: Hasil langsung tersimpan dengan timestamp
-- **Progress tracking**: Visualisasi progress testing
+### ✨ Fitur Auto-Deteksi
+Notebook secara **otomatis** mendeteksi:
+- 📶 **Kekuatan sinyal WiFi** (dBm) → dikategorikan Good/Bad
+- 📻 **Band WiFi** (2.4GHz / 5GHz) dari channel number
+- 🌐 **DNS Server** yang sedang digunakan
+
+### 📁 Format Output Adaptif
+Nama file dan folder otomatis menyesuaikan kondisi:
+```
+results/session_good_signal_5G_8-8-8-8_20260413_123456/
+├── session_info.json               # Detail sesi lengkap
+├── ping_result_5G_8-8-8-8.txt     # Hasil ping test
+├── Target_1_instagram.com_5G.csv  # Data per target
+├── all_results_good_signal_5G_8-8-8-8.csv
+├── summary_good_signal_5G_8-8-8-8.csv
+└── analysis_chart_good_signal_5G_8-8-8-8.png
+```
+
+### 📝 Config File (config.txt)
+Config hanya untuk:
+- Target URL yang akan ditest
+- Threshold kategorisasi (signal dBm, TTFB ms)
+- ONT DNS (referensi jika auto-detect gagal)
+
+```txt
+TARGETS = https://www.instagram.com, https://example.com
+SAMPLE_COUNT = 10
+SIGNAL_THRESHOLD_DBM = -65
+TTFB_GOOD_MS = 200
+TTFB_WARNING_MS = 500
+ONT_DNS = 8.8.8.8
+```
+
+### 🚀 Cara Penggunaan
+1. Edit `config.txt` jika diperlukan
+2. Buka `ttfb_test.ipynb`
+3. Klik **Run All** dan tunggu hasil
+4. Report adaptif akan muncul di folder `results/`
 
 ### Contoh Command yang Dijalankan
 ```bash
-# DNS Lookup dengan trace
-dig @8.8.8.8 www.instagram.com +trace
-dig @8.8.8.8 qt-google-cloud-cdn.bronze.systems +trace
-dig @<ISP_DNS> www.instagram.com +trace
-dig @<ISP_DNS> qt-google-cloud-cdn.bronze.systems +trace
+# Ping test
+ping -c 60 8.8.8.8
 
 # TTFB measurement dengan curl
 curl -o /dev/null -s -w "Lookup: %{time_namelookup}s\nConnect: %{time_connect}s\nAppConnect: %{time_appconnect}s\nTTFB: %{time_starttransfer}s\nTotal: %{time_total}s\n" https://www.instagram.com
@@ -202,10 +249,12 @@ curl -o /dev/null -s -w "Lookup: %{time_namelookup}s\nConnect: %{time_connect}s\
 ### Parameter Testing
 | Parameter | Default | Deskripsi |
 |-----------|---------|-----------|
-| `sample_count` | 5 | Jumlah pengulangan test |
-| `delay_seconds` | 5 | Jeda antar test (detik) |
-| `dns_servers` | ['8.8.8.8', 'ISP'] | Daftar DNS server |
-| `endpoints` | ['www.instagram.com', 'qt-google-cloud-cdn.bronze.systems'] | Target domain |
+| `SAMPLE_COUNT` | 10 | Jumlah pengulangan test per target |
+| `DELAY_SECONDS` | 30 | Jeda antar test (detik) |
+| `PING_DURATION` | 60 | Durasi ping test (detik) |
+| `SIGNAL_THRESHOLD_DBM` | -65 | Threshold good/bad signal |
+| `TTFB_GOOD_MS` | 200 | TTFB dianggap baik jika < nilai ini |
+| `TTFB_WARNING_MS` | 500 | TTFB dianggap warning jika < nilai ini |
 
 ### Metrik TTFB yang Diukur
 - `time_namelookup`: DNS resolution time

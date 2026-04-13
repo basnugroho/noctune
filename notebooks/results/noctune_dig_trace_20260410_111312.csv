@@ -1,0 +1,81 @@
+timestamp,domain,dns_server,query_time_ms,total_queries,final_answer,trace_hops,error,status,dns_name,sample_num
+2026-04-10T10:33:05.268704,www.instagram.com,8.8.8.8,22,1,,[22],,good,Google DNS Primary,1
+2026-04-10T10:33:35.311488,www.instagram.com,8.8.8.8,21,1,,[21],,good,Google DNS Primary,2
+2026-04-10T10:34:05.364201,www.instagram.com,8.8.8.8,22,1,,[22],,good,Google DNS Primary,3
+2026-04-10T10:34:35.408866,www.instagram.com,8.8.8.8,23,1,,[23],,good,Google DNS Primary,4
+2026-04-10T10:35:05.463127,www.instagram.com,8.8.8.8,41,1,,[41],,good,Google DNS Primary,5
+2026-04-10T10:35:35.541769,www.instagram.com,8.8.8.8,219,1,,[219],,poor,Google DNS Primary,6
+2026-04-10T10:36:05.773935,www.instagram.com,8.8.8.8,26,1,,[26],,good,Google DNS Primary,7
+2026-04-10T10:36:35.828118,www.instagram.com,8.8.8.8,23,1,,[23],,good,Google DNS Primary,8
+2026-04-10T10:37:05.870993,www.instagram.com,8.8.8.8,24,1,,[24],,good,Google DNS Primary,9
+2026-04-10T10:37:35.926476,www.instagram.com,8.8.8.8,23,1,,[23],,good,Google DNS Primary,10
+2026-04-10T10:38:05.991813,www.instagram.com,8.8.4.4,54,1,,[54],,good,Google DNS Secondary,1
+2026-04-10T10:38:36.070046,www.instagram.com,8.8.4.4,22,1,,[22],,good,Google DNS Secondary,2
+2026-04-10T10:39:06.127598,www.instagram.com,8.8.4.4,22,1,,[22],,good,Google DNS Secondary,3
+2026-04-10T10:39:36.177465,www.instagram.com,8.8.4.4,22,1,,[22],,good,Google DNS Secondary,4
+2026-04-10T10:40:06.216621,www.instagram.com,8.8.4.4,22,1,,[22],,good,Google DNS Secondary,5
+2026-04-10T10:40:36.257611,www.instagram.com,8.8.4.4,23,1,,[23],,good,Google DNS Secondary,6
+2026-04-10T10:41:06.306251,www.instagram.com,8.8.4.4,22,1,,[22],,good,Google DNS Secondary,7
+2026-04-10T10:41:36.352173,www.instagram.com,8.8.4.4,23,1,,[23],,good,Google DNS Secondary,8
+2026-04-10T10:42:06.405149,www.instagram.com,8.8.4.4,22,1,,[22],,good,Google DNS Secondary,9
+2026-04-10T10:42:36.458622,www.instagram.com,8.8.4.4,755,1,,[755],,poor,Google DNS Secondary,10
+2026-04-10T10:43:17.260976,www.instagram.com,1.1.1.1,39,1,,[39],,good,Cloudflare DNS,1
+2026-04-10T10:43:47.327823,www.instagram.com,1.1.1.1,25,1,,[25],,good,Cloudflare DNS,2
+2026-04-10T10:44:17.388989,www.instagram.com,1.1.1.1,86,1,,[86],,good,Cloudflare DNS,3
+2026-04-10T10:44:47.511869,www.instagram.com,1.1.1.1,128,1,,[128],,warning,Cloudflare DNS,4
+2026-04-10T10:45:17.663423,www.instagram.com,1.1.1.1,23,1,,[23],,good,Cloudflare DNS,5
+2026-04-10T10:45:47.716335,www.instagram.com,1.1.1.1,53,1,,[53],,good,Cloudflare DNS,6
+2026-04-10T10:46:17.799146,www.instagram.com,1.1.1.1,25,1,,[25],,good,Cloudflare DNS,7
+2026-04-10T10:46:47.846235,www.instagram.com,1.1.1.1,,0,,[],Exit code: 9,error,Cloudflare DNS,8
+2026-04-10T10:47:32.878246,www.instagram.com,1.1.1.1,25,1,,[25],,good,Cloudflare DNS,9
+2026-04-10T10:48:07.934729,www.instagram.com,1.1.1.1,155,1,,[155],,warning,Cloudflare DNS,10
+2026-04-10T10:48:38.125032,www.instagram.com,192.168.111.1,2,1,,[2],,good,ISP DNS 1,1
+2026-04-10T10:49:08.145499,www.instagram.com,192.168.111.1,30,1,,[30],,good,ISP DNS 1,2
+2026-04-10T10:49:38.204101,www.instagram.com,192.168.111.1,2,1,,[2],,good,ISP DNS 1,3
+2026-04-10T10:50:08.234346,www.instagram.com,192.168.111.1,15,1,,[15],,good,ISP DNS 1,4
+2026-04-10T10:50:38.279484,www.instagram.com,192.168.111.1,5,1,,[5],,good,ISP DNS 1,5
+2026-04-10T10:51:08.300652,www.instagram.com,192.168.111.1,4,1,,[4],,good,ISP DNS 1,6
+2026-04-10T10:51:38.329580,www.instagram.com,192.168.111.1,2,1,,[2],,good,ISP DNS 1,7
+2026-04-10T10:52:08.354330,www.instagram.com,192.168.111.1,90,1,,[90],,good,ISP DNS 1,8
+2026-04-10T10:52:38.473169,www.instagram.com,192.168.111.1,3,1,,[3],,good,ISP DNS 1,9
+2026-04-10T10:53:08.505220,www.instagram.com,192.168.111.1,12,1,,[12],,good,ISP DNS 1,10
+2026-04-10T10:53:38.546615,qt-google-cloud-cdn.bronze.systems,8.8.8.8,39,1,,[39],,good,Google DNS Primary,1
+2026-04-10T10:54:08.618649,qt-google-cloud-cdn.bronze.systems,8.8.8.8,29,1,,[29],,good,Google DNS Primary,2
+2026-04-10T10:54:38.677445,qt-google-cloud-cdn.bronze.systems,8.8.8.8,23,1,,[23],,good,Google DNS Primary,3
+2026-04-10T10:55:08.733776,qt-google-cloud-cdn.bronze.systems,8.8.8.8,27,1,,[27],,good,Google DNS Primary,4
+2026-04-10T10:55:38.781900,qt-google-cloud-cdn.bronze.systems,8.8.8.8,34,1,,[34],,good,Google DNS Primary,5
+2026-04-10T10:56:08.847089,qt-google-cloud-cdn.bronze.systems,8.8.8.8,23,1,,[23],,good,Google DNS Primary,6
+2026-04-10T10:56:38.896832,qt-google-cloud-cdn.bronze.systems,8.8.8.8,22,1,,[22],,good,Google DNS Primary,7
+2026-04-10T10:57:08.959679,qt-google-cloud-cdn.bronze.systems,8.8.8.8,23,1,,[23],,good,Google DNS Primary,8
+2026-04-10T10:57:39.015539,qt-google-cloud-cdn.bronze.systems,8.8.8.8,473,1,,[473],,poor,Google DNS Primary,9
+2026-04-10T10:58:09.508466,qt-google-cloud-cdn.bronze.systems,8.8.8.8,1319,1,,[1319],,poor,Google DNS Primary,10
+2026-04-10T10:58:40.844518,qt-google-cloud-cdn.bronze.systems,8.8.4.4,23,1,,[23],,good,Google DNS Secondary,1
+2026-04-10T10:59:10.891866,qt-google-cloud-cdn.bronze.systems,8.8.4.4,30,1,,[30],,good,Google DNS Secondary,2
+2026-04-10T10:59:40.949558,qt-google-cloud-cdn.bronze.systems,8.8.4.4,41,1,,[41],,good,Google DNS Secondary,3
+2026-04-10T11:00:11.010815,qt-google-cloud-cdn.bronze.systems,8.8.4.4,31,1,,[31],,good,Google DNS Secondary,4
+2026-04-10T11:00:41.091749,qt-google-cloud-cdn.bronze.systems,8.8.4.4,37,1,,[37],,good,Google DNS Secondary,5
+2026-04-10T11:01:11.178776,qt-google-cloud-cdn.bronze.systems,8.8.4.4,104,1,,[104],,warning,Google DNS Secondary,6
+2026-04-10T11:01:41.316750,qt-google-cloud-cdn.bronze.systems,8.8.4.4,62,1,,[62],,good,Google DNS Secondary,7
+2026-04-10T11:02:11.415251,qt-google-cloud-cdn.bronze.systems,8.8.4.4,28,1,,[28],,good,Google DNS Secondary,8
+2026-04-10T11:02:41.468508,qt-google-cloud-cdn.bronze.systems,8.8.4.4,22,1,,[22],,good,Google DNS Secondary,9
+2026-04-10T11:03:11.528399,qt-google-cloud-cdn.bronze.systems,8.8.4.4,28,1,,[28],,good,Google DNS Secondary,10
+2026-04-10T11:03:41.576401,qt-google-cloud-cdn.bronze.systems,1.1.1.1,25,1,,[25],,good,Cloudflare DNS,1
+2026-04-10T11:04:11.633705,qt-google-cloud-cdn.bronze.systems,1.1.1.1,22,1,,[22],,good,Cloudflare DNS,2
+2026-04-10T11:04:41.678724,qt-google-cloud-cdn.bronze.systems,1.1.1.1,22,1,,[22],,good,Cloudflare DNS,3
+2026-04-10T11:05:11.737759,qt-google-cloud-cdn.bronze.systems,1.1.1.1,26,1,,[26],,good,Cloudflare DNS,4
+2026-04-10T11:05:41.783529,qt-google-cloud-cdn.bronze.systems,1.1.1.1,28,1,,[28],,good,Cloudflare DNS,5
+2026-04-10T11:06:11.838504,qt-google-cloud-cdn.bronze.systems,1.1.1.1,22,1,,[22],,good,Cloudflare DNS,6
+2026-04-10T11:06:41.889522,qt-google-cloud-cdn.bronze.systems,1.1.1.1,23,1,,[23],,good,Cloudflare DNS,7
+2026-04-10T11:07:11.936457,qt-google-cloud-cdn.bronze.systems,1.1.1.1,22,1,,[22],,good,Cloudflare DNS,8
+2026-04-10T11:07:42.007263,qt-google-cloud-cdn.bronze.systems,1.1.1.1,55,1,,[55],,good,Cloudflare DNS,9
+2026-04-10T11:08:12.092855,qt-google-cloud-cdn.bronze.systems,1.1.1.1,22,1,,[22],,good,Cloudflare DNS,10
+2026-04-10T11:08:42.153064,qt-google-cloud-cdn.bronze.systems,192.168.111.1,14,1,,[14],,good,ISP DNS 1,1
+2026-04-10T11:09:12.199690,qt-google-cloud-cdn.bronze.systems,192.168.111.1,12,1,,[12],,good,ISP DNS 1,2
+2026-04-10T11:09:42.236558,qt-google-cloud-cdn.bronze.systems,192.168.111.1,2,1,,[2],,good,ISP DNS 1,3
+2026-04-10T11:10:12.253231,qt-google-cloud-cdn.bronze.systems,192.168.111.1,8,1,,[8],,good,ISP DNS 1,4
+2026-04-10T11:10:42.302583,qt-google-cloud-cdn.bronze.systems,192.168.111.1,3,1,,[3],,good,ISP DNS 1,5
+2026-04-10T11:11:12.335047,qt-google-cloud-cdn.bronze.systems,192.168.111.1,5,1,,[5],,good,ISP DNS 1,6
+2026-04-10T11:11:42.368971,qt-google-cloud-cdn.bronze.systems,192.168.111.1,6,1,,[6],,good,ISP DNS 1,7
+2026-04-10T11:12:12.406361,qt-google-cloud-cdn.bronze.systems,192.168.111.1,34,1,,[34],,good,ISP DNS 1,8
+2026-04-10T11:12:42.463148,qt-google-cloud-cdn.bronze.systems,192.168.111.1,3,1,,[3],,good,ISP DNS 1,9
+2026-04-10T11:13:12.495270,qt-google-cloud-cdn.bronze.systems,192.168.111.1,6,1,,[6],,good,ISP DNS 1,10
