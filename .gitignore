@@ -18,7 +18,8 @@ __pycache__/
 *.ipynb_checkpoints
 
 # Results (keep directory, ignore data files)
-# results/*.csv
+results/
+notebooks/results/
 
 # IDE
 .vscode/
@@ -33,5 +34,10 @@ Thumbs.db
 # Logs
 *.log
 
-todo/TTFB command reference .xlsxtools/get_ssid
+# Generated files
+todo/
+output*.png
+
+# Tools (compiled binaries)
+tools/get_ssid
 tools/GetSSID.app/

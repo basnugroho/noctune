@@ -1512,6 +1512,30 @@ HTML_TEMPLATE = """
         .ttfb-badge.poor { background: rgba(244, 67, 54, 0.2); color: #e57373; }
         .ttfb-badge.error { background: rgba(158, 158, 158, 0.2); color: #bdbdbd; }
         
+        /* Charts */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+            margin-top: 12px;
+        }
+        .chart-card {
+            background: rgba(255,255,255,0.03);
+            border-radius: 10px;
+            padding: 14px;
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        .chart-title {
+            font-size: 0.85em;
+            color: #888;
+            margin-bottom: 10px;
+            font-weight: 500;
+        }
+        .chart-card canvas {
+            width: 100% !important;
+            height: auto !important;
+        }
+        
         /* Right Panel - Logs */
         .logs-panel {
             background: #0d0d17;
@@ -1780,18 +1804,6 @@ HTML_TEMPLATE = """
                 </div>
             </div>
             
-            <div id="test-progress" style="display: none;">
-                <div class="panel-title">⏳ Test Progress</div>
-                <div class="progress-details">
-                    <span id="progress-count">0 / 0</span>
-                    <span id="progress-percent">0%</span>
-                    <span id="progress-eta">ETA: --</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="fill" id="progress-fill" style="width: 0%"></div>
-                </div>
-            </div>
-            
             <div id="results-section" style="display: none;">
                 <div class="panel-title">📊 Results</div>
                 
@@ -1824,6 +1836,41 @@ HTML_TEMPLATE = """
                         <button class="btn btn-success" onclick="downloadCSV()" id="download-csv-btn">📥 Download CSV</button>
                         <button class="btn btn-primary" onclick="downloadReport()" id="download-report-btn">📄 Download Report</button>
                     </div>
+                </div>
+                
+                <!-- Charts Section -->
+                <div id="charts-section" style="display: none; margin-top: 20px;">
+                    <div class="panel-title">📈 Charts</div>
+                    <div class="charts-grid">
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Distribution by Target</div>
+                            <canvas id="chart-boxplot" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Mean TTFB Comparison</div>
+                            <canvas id="chart-bar" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Over Time</div>
+                            <canvas id="chart-line" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Status Distribution</div>
+                            <canvas id="chart-pie" width="400" height="280"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="test-progress" style="display: none;">
+                <div class="panel-title">⏳ Test Progress</div>
+                <div class="progress-details">
+                    <span id="progress-count">0 / 0</span>
+                    <span id="progress-percent">0%</span>
+                    <span id="progress-eta">ETA: --</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="fill" id="progress-fill" style="width: 0%"></div>
                 </div>
             </div>
             
@@ -2501,8 +2548,422 @@ HTML_TEMPLATE = """
             // Show download buttons when completed
             if (status.status === 'completed') {
                 downloadSection.style.display = 'block';
+                drawCharts(status);
             } else {
                 downloadSection.style.display = 'none';
+            }
+        }
+        
+        // ===== CHART DRAWING (Pure Canvas) =====
+        
+        function drawCharts(status) {
+            const chartsSection = document.getElementById('charts-section');
+            chartsSection.style.display = 'block';
+            
+            const results = status.ttfb_results.filter(r => r.ttfb_ms);
+            if (results.length === 0) return;
+            
+            const config = status.config || {};
+            const goodMs = config.TTFB_GOOD_MS || 200;
+            const warnMs = config.TTFB_WARNING_MS || 500;
+            
+            // Group by target
+            const byTarget = {};
+            for (const r of results) {
+                const name = r.target_name || 'Unknown';
+                if (!byTarget[name]) byTarget[name] = [];
+                byTarget[name].push(r.ttfb_ms);
+            }
+            const targetNames = Object.keys(byTarget);
+            const targetColors = ['#3a7bd5', '#00d2ff', '#f093fb', '#ff6b6b', '#ffd93d', '#6bcb77', '#4d96ff', '#ff922b'];
+            
+            drawBoxplot('chart-boxplot', byTarget, targetNames, targetColors, goodMs, warnMs);
+            drawBarChart('chart-bar', byTarget, targetNames, targetColors, goodMs, warnMs);
+            drawLineChart('chart-line', results, targetNames, targetColors, goodMs, warnMs);
+            drawPieChart('chart-pie', results);
+        }
+        
+        function getCanvasCtx(id) {
+            const canvas = document.getElementById(id);
+            const dpr = window.devicePixelRatio || 1;
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(dpr, dpr);
+            ctx.clearRect(0, 0, rect.width, rect.height);
+            return { ctx, w: rect.width, h: rect.height };
+        }
+        
+        function drawBoxplot(id, byTarget, names, colors, goodMs, warnMs) {
+            const { ctx, w, h } = getCanvasCtx(id);
+            const pad = { top: 20, right: 20, bottom: 50, left: 55 };
+            const plotW = w - pad.left - pad.right;
+            const plotH = h - pad.top - pad.bottom;
+            
+            // Find Y range
+            let allVals = [];
+            for (const name of names) allVals = allVals.concat(byTarget[name]);
+            const yMin = 0;
+            const yMax = Math.max(...allVals) * 1.15;
+            
+            const toY = (v) => pad.top + plotH - (v / yMax * plotH);
+            
+            // Y axis
+            ctx.strokeStyle = 'rgba(255,255,255,0.1)';
+            ctx.fillStyle = '#888';
+            ctx.font = '11px SF Mono, Consolas, monospace';
+            ctx.textAlign = 'right';
+            const ySteps = 5;
+            for (let i = 0; i <= ySteps; i++) {
+                const val = yMin + (yMax - yMin) * i / ySteps;
+                const y = toY(val);
+                ctx.beginPath();
+                ctx.moveTo(pad.left, y);
+                ctx.lineTo(w - pad.right, y);
+                ctx.stroke();
+                ctx.fillText(Math.round(val) + 'ms', pad.left - 5, y + 4);
+            }
+            
+            // Threshold lines
+            if (goodMs < yMax) {
+                ctx.strokeStyle = 'rgba(76,175,80,0.5)';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(pad.left, toY(goodMs));
+                ctx.lineTo(w - pad.right, toY(goodMs));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            if (warnMs < yMax) {
+                ctx.strokeStyle = 'rgba(255,152,0,0.5)';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(pad.left, toY(warnMs));
+                ctx.lineTo(w - pad.right, toY(warnMs));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            // Draw boxes
+            const boxW = Math.min(50, plotW / names.length * 0.6);
+            const gap = plotW / names.length;
+            
+            for (let i = 0; i < names.length; i++) {
+                const vals = byTarget[names[i]].slice().sort((a, b) => a - b);
+                const cx = pad.left + gap * i + gap / 2;
+                const min = vals[0];
+                const max = vals[vals.length - 1];
+                const q1 = vals[Math.floor(vals.length * 0.25)];
+                const q3 = vals[Math.floor(vals.length * 0.75)];
+                const median = vals[Math.floor(vals.length * 0.5)];
+                
+                const color = colors[i % colors.length];
+                
+                // Whiskers
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(cx, toY(min));
+                ctx.lineTo(cx, toY(q1));
+                ctx.moveTo(cx, toY(q3));
+                ctx.lineTo(cx, toY(max));
+                ctx.stroke();
+                
+                // Whisker caps
+                ctx.beginPath();
+                ctx.moveTo(cx - boxW * 0.3, toY(min));
+                ctx.lineTo(cx + boxW * 0.3, toY(min));
+                ctx.moveTo(cx - boxW * 0.3, toY(max));
+                ctx.lineTo(cx + boxW * 0.3, toY(max));
+                ctx.stroke();
+                
+                // Box
+                ctx.fillStyle = color + '33';
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                const bx = cx - boxW / 2;
+                const by = toY(q3);
+                const bh = toY(q1) - toY(q3);
+                ctx.fillRect(bx, by, boxW, bh);
+                ctx.strokeRect(bx, by, boxW, bh);
+                
+                // Median
+                ctx.strokeStyle = '#fff';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(bx, toY(median));
+                ctx.lineTo(bx + boxW, toY(median));
+                ctx.stroke();
+                
+                // Label
+                ctx.fillStyle = '#aaa';
+                ctx.font = '10px -apple-system, sans-serif';
+                ctx.textAlign = 'center';
+                const label = names[i].length > 15 ? names[i].substring(0, 13) + '..' : names[i];
+                ctx.fillText(label, cx, h - pad.bottom + 15);
+            }
+        }
+        
+        function drawBarChart(id, byTarget, names, colors, goodMs, warnMs) {
+            const { ctx, w, h } = getCanvasCtx(id);
+            const pad = { top: 20, right: 60, bottom: 30, left: 55 };
+            const plotW = w - pad.left - pad.right;
+            const plotH = h - pad.top - pad.bottom;
+            
+            const means = names.map(n => {
+                const vals = byTarget[n];
+                return vals.reduce((a, b) => a + b, 0) / vals.length;
+            });
+            const xMax = Math.max(...means) * 1.3;
+            
+            const toX = (v) => pad.left + (v / xMax * plotW);
+            const barH = Math.min(30, plotH / names.length * 0.7);
+            const gap = plotH / names.length;
+            
+            // X axis grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.fillStyle = '#888';
+            ctx.font = '11px SF Mono, Consolas, monospace';
+            ctx.textAlign = 'center';
+            for (let i = 0; i <= 4; i++) {
+                const val = xMax * i / 4;
+                const x = toX(val);
+                ctx.beginPath();
+                ctx.moveTo(x, pad.top);
+                ctx.lineTo(x, h - pad.bottom);
+                ctx.stroke();
+                ctx.fillText(Math.round(val) + 'ms', x, h - pad.bottom + 15);
+            }
+            
+            // Threshold lines
+            if (goodMs < xMax) {
+                ctx.strokeStyle = 'rgba(76,175,80,0.5)';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(toX(goodMs), pad.top);
+                ctx.lineTo(toX(goodMs), h - pad.bottom);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            if (warnMs < xMax) {
+                ctx.strokeStyle = 'rgba(255,152,0,0.5)';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(toX(warnMs), pad.top);
+                ctx.lineTo(toX(warnMs), h - pad.bottom);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            // Draw bars
+            for (let i = 0; i < names.length; i++) {
+                const cy = pad.top + gap * i + gap / 2;
+                const mean = means[i];
+                const color = mean < goodMs ? '#4caf50' : (mean < warnMs ? '#ff9800' : '#f44336');
+                
+                // Bar
+                const bw = toX(mean) - pad.left;
+                ctx.fillStyle = color + 'aa';
+                ctx.beginPath();
+                ctx.roundRect(pad.left, cy - barH / 2, bw, barH, 4);
+                ctx.fill();
+                
+                // Value label
+                ctx.fillStyle = '#ddd';
+                ctx.font = '11px SF Mono, Consolas, monospace';
+                ctx.textAlign = 'left';
+                ctx.fillText(Math.round(mean) + 'ms', toX(mean) + 6, cy + 4);
+                
+                // Target label
+                ctx.fillStyle = '#aaa';
+                ctx.font = '10px -apple-system, sans-serif';
+                ctx.textAlign = 'right';
+                const label = names[i].length > 12 ? names[i].substring(0, 10) + '..' : names[i];
+                ctx.fillText(label, pad.left - 5, cy + 4);
+            }
+        }
+        
+        function drawLineChart(id, results, names, colors, goodMs, warnMs) {
+            const { ctx, w, h } = getCanvasCtx(id);
+            const pad = { top: 20, right: 20, bottom: 50, left: 55 };
+            const plotW = w - pad.left - pad.right;
+            const plotH = h - pad.top - pad.bottom;
+            
+            let maxSample = 0;
+            let maxTtfb = 0;
+            const byTarget = {};
+            for (const r of results) {
+                const name = r.target_name || 'Unknown';
+                if (!byTarget[name]) byTarget[name] = [];
+                byTarget[name].push({ x: r.sample_num, y: r.ttfb_ms });
+                if (r.sample_num > maxSample) maxSample = r.sample_num;
+                if (r.ttfb_ms > maxTtfb) maxTtfb = r.ttfb_ms;
+            }
+            maxTtfb *= 1.15;
+            
+            const toX = (v) => pad.left + ((v - 1) / Math.max(maxSample - 1, 1) * plotW);
+            const toY = (v) => pad.top + plotH - (v / maxTtfb * plotH);
+            
+            // Grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+            ctx.fillStyle = '#888';
+            ctx.font = '11px SF Mono, Consolas, monospace';
+            ctx.textAlign = 'right';
+            for (let i = 0; i <= 5; i++) {
+                const val = maxTtfb * i / 5;
+                const y = toY(val);
+                ctx.beginPath();
+                ctx.moveTo(pad.left, y);
+                ctx.lineTo(w - pad.right, y);
+                ctx.stroke();
+                ctx.fillText(Math.round(val) + 'ms', pad.left - 5, y + 4);
+            }
+            
+            // X axis labels
+            ctx.textAlign = 'center';
+            for (let s = 1; s <= maxSample; s++) {
+                ctx.fillText('#' + s, toX(s), h - pad.bottom + 15);
+            }
+            
+            // Threshold lines
+            if (goodMs < maxTtfb) {
+                ctx.strokeStyle = 'rgba(76,175,80,0.4)';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(pad.left, toY(goodMs));
+                ctx.lineTo(w - pad.right, toY(goodMs));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            if (warnMs < maxTtfb) {
+                ctx.strokeStyle = 'rgba(255,152,0,0.4)';
+                ctx.setLineDash([4, 4]);
+                ctx.beginPath();
+                ctx.moveTo(pad.left, toY(warnMs));
+                ctx.lineTo(w - pad.right, toY(warnMs));
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+            
+            // Draw lines
+            const targetIdx = {};
+            let idx = 0;
+            for (const name of names) {
+                targetIdx[name] = idx++;
+            }
+            
+            for (const name of Object.keys(byTarget)) {
+                const pts = byTarget[name].sort((a, b) => a.x - b.x);
+                const ci = targetIdx[name] !== undefined ? targetIdx[name] : 0;
+                const color = colors[ci % colors.length];
+                
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                for (let i = 0; i < pts.length; i++) {
+                    const x = toX(pts[i].x);
+                    const y = toY(pts[i].y);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+                
+                // Dots
+                ctx.fillStyle = color;
+                for (const pt of pts) {
+                    ctx.beginPath();
+                    ctx.arc(toX(pt.x), toY(pt.y), 3.5, 0, Math.PI * 2);
+                    ctx.fill();
+                }
+            }
+            
+            // Legend
+            ctx.font = '10px -apple-system, sans-serif';
+            let lx = pad.left + 5;
+            for (let i = 0; i < names.length; i++) {
+                const color = colors[i % colors.length];
+                ctx.fillStyle = color;
+                ctx.fillRect(lx, h - 15, 12, 3);
+                ctx.fillStyle = '#aaa';
+                const label = names[i].length > 12 ? names[i].substring(0, 10) + '..' : names[i];
+                ctx.textAlign = 'left';
+                ctx.fillText(label, lx + 16, h - 11);
+                lx += ctx.measureText(label).width + 30;
+            }
+        }
+        
+        function drawPieChart(id, results) {
+            const { ctx, w, h } = getCanvasCtx(id);
+            
+            const counts = {};
+            for (const r of results) {
+                const s = r.status || 'unknown';
+                counts[s] = (counts[s] || 0) + 1;
+            }
+            
+            const statusColors = {
+                good: '#4caf50',
+                warning: '#ff9800',
+                poor: '#f44336',
+                error: '#9e9e9e',
+                timeout: '#757575',
+                unknown: '#616161'
+            };
+            
+            const total = Object.values(counts).reduce((a, b) => a + b, 0);
+            const cx = w * 0.4;
+            const cy = h * 0.5;
+            const radius = Math.min(cx - 20, cy - 30) * 0.85;
+            
+            let startAngle = -Math.PI / 2;
+            const slices = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+            
+            for (const [status, count] of slices) {
+                const angle = (count / total) * Math.PI * 2;
+                const color = statusColors[status] || '#888';
+                
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.moveTo(cx, cy);
+                ctx.arc(cx, cy, radius, startAngle, startAngle + angle);
+                ctx.closePath();
+                ctx.fill();
+                
+                // Percentage label
+                const midAngle = startAngle + angle / 2;
+                const labelR = radius * 0.65;
+                const lx = cx + Math.cos(midAngle) * labelR;
+                const ly = cy + Math.sin(midAngle) * labelR;
+                const pct = ((count / total) * 100).toFixed(1);
+                if (parseFloat(pct) > 3) {
+                    ctx.fillStyle = '#fff';
+                    ctx.font = 'bold 12px -apple-system, sans-serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText(pct + '%', lx, ly);
+                }
+                
+                startAngle += angle;
+            }
+            
+            // Legend
+            ctx.font = '11px -apple-system, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            let ly = 25;
+            for (const [status, count] of slices) {
+                const color = statusColors[status] || '#888';
+                const lx = w * 0.75;
+                
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.roundRect(lx, ly, 12, 12, 2);
+                ctx.fill();
+                
+                ctx.fillStyle = '#ccc';
+                ctx.fillText(`${status} (${count})`, lx + 18, ly + 1);
+                ly += 22;
             }
         }
         
@@ -2665,7 +3126,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             self.end_headers()
     
     def handle_download_csv(self):
-        """Generate and send CSV file for download."""
+        """Generate and send CSV file for download with ALL available data."""
         global test_results
         
         if not test_results.get('ttfb_results'):
@@ -2679,33 +3140,115 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             # Generate filename
             session_id = test_results.get('session_id', datetime.now().strftime('%Y%m%d_%H%M%S'))
             network_info = test_results.get('network_info', {})
+            location = network_info.get('location', {}) or {}
+            config = test_results.get('config', {})
+            summary = test_results.get('summary', {})
             band = (network_info.get('wifi_band') or 'Unknown').replace('.', '_').replace('GHz', 'G')
             dns = (network_info.get('dns_primary') or 'UnknownDNS').replace('.', '-')
             
             filename = f"ttfb_results_{band}_{dns}_{session_id}.csv"
+            
+            # Comprehensive field list - ALL available data
+            fieldnames = [
+                # Session info
+                'session_id', 'test_start_time', 'test_end_time',
+                # Test result fields
+                'timestamp', 'time_short', 'target_name', 'sample_num', 'url',
+                'ttfb_ms', 'lookup_ms', 'connect_ms', 'total_ms',
+                'http_code', 'status', 'error',
+                # Device info
+                'device_name', 'device_model', 'os_name', 'os_version',
+                'battery_level', 'battery_charging',
+                # WiFi Signal info
+                'wifi_ssid', 'wifi_ssid_method', 'wifi_rssi', 'wifi_band', 'wifi_channel',
+                'signal_threshold', 'signal_status',
+                # DNS info
+                'dns_primary', 'dns_servers',
+                # Location info
+                'location_city', 'location_region', 'location_country',
+                'location_lat', 'location_lon', 'location_accuracy',
+                'location_method', 'location_is_precise',
+                'isp', 'public_ip',
+                # Config thresholds
+                'config_ttfb_good_ms', 'config_ttfb_warning_ms',
+                'config_sample_count', 'config_delay_seconds',
+                # Summary stats (same for all rows)
+                'summary_mean_ttfb', 'summary_median_ttfb',
+                'summary_min_ttfb', 'summary_max_ttfb', 'summary_std_ttfb',
+                'summary_good_count', 'summary_warning_count', 'summary_poor_count',
+                'summary_total_tests', 'summary_successful_tests', 'summary_failed_tests',
+            ]
             
             # Create CSV content
             output = io.StringIO()
             results = test_results['ttfb_results']
             
             if results:
-                fieldnames = ['timestamp', 'target_name', 'sample_num', 'url', 'ttfb_ms', 'lookup_ms', 
-                             'connect_ms', 'total_ms', 'http_code', 'status', 'error',
-                             'wifi_band', 'wifi_rssi', 'dns_primary', 'location_city', 'location_country', 'isp']
-                writer = csv.DictWriter(output, fieldnames=[f for f in fieldnames if any(f in r for r in results)], extrasaction='ignore')
+                writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
                 
                 for result in results:
-                    # Add network info to each row
-                    result_row = dict(result)
-                    result_row['wifi_band'] = network_info.get('wifi_band')
-                    result_row['wifi_rssi'] = network_info.get('wifi_rssi')
-                    result_row['dns_primary'] = network_info.get('dns_primary')
-                    if network_info.get('location'):
-                        result_row['location_city'] = network_info['location'].get('city')
-                        result_row['location_country'] = network_info['location'].get('country')
-                        result_row['isp'] = network_info['location'].get('isp')
-                    writer.writerow(result_row)
+                    row = dict(result)
+                    
+                    # Session info
+                    row['session_id'] = session_id
+                    row['test_start_time'] = test_results.get('start_time', '')
+                    row['test_end_time'] = test_results.get('end_time', '')
+                    
+                    # Device info
+                    row['device_name'] = network_info.get('device_name', '')
+                    row['device_model'] = network_info.get('device_model', '')
+                    row['os_name'] = network_info.get('os_name', '')
+                    row['os_version'] = network_info.get('os_version', '')
+                    row['battery_level'] = network_info.get('battery_level', '')
+                    row['battery_charging'] = network_info.get('battery_charging', '')
+                    
+                    # WiFi Signal info
+                    row['wifi_ssid'] = network_info.get('wifi_ssid', '')
+                    row['wifi_ssid_method'] = network_info.get('wifi_ssid_method', '')
+                    row['wifi_rssi'] = network_info.get('wifi_rssi', '')
+                    row['wifi_band'] = network_info.get('wifi_band', '')
+                    row['wifi_channel'] = network_info.get('wifi_channel', '')
+                    row['signal_threshold'] = network_info.get('signal_threshold', '')
+                    row['signal_status'] = network_info.get('signal_status', '')
+                    
+                    # DNS info
+                    row['dns_primary'] = network_info.get('dns_primary', '')
+                    dns_servers = network_info.get('dns_servers', [])
+                    row['dns_servers'] = ';'.join(dns_servers) if dns_servers else ''
+                    
+                    # Location info
+                    row['location_city'] = location.get('city', '')
+                    row['location_region'] = location.get('region', '')
+                    row['location_country'] = location.get('country', '')
+                    row['location_lat'] = location.get('lat', '')
+                    row['location_lon'] = location.get('lon', '')
+                    row['location_accuracy'] = location.get('accuracy', '')
+                    row['location_method'] = location.get('method', '')
+                    row['location_is_precise'] = location.get('is_precise', '')
+                    row['isp'] = location.get('isp', '')
+                    row['public_ip'] = location.get('ip', '')
+                    
+                    # Config thresholds
+                    row['config_ttfb_good_ms'] = config.get('TTFB_GOOD_MS', '')
+                    row['config_ttfb_warning_ms'] = config.get('TTFB_WARNING_MS', '')
+                    row['config_sample_count'] = config.get('SAMPLE_COUNT', '')
+                    row['config_delay_seconds'] = config.get('DELAY_SECONDS', '')
+                    
+                    # Summary stats
+                    row['summary_mean_ttfb'] = round(summary.get('mean_ttfb', 0), 2) if summary.get('mean_ttfb') else ''
+                    row['summary_median_ttfb'] = round(summary.get('median_ttfb', 0), 2) if summary.get('median_ttfb') else ''
+                    row['summary_min_ttfb'] = round(summary.get('min_ttfb', 0), 2) if summary.get('min_ttfb') else ''
+                    row['summary_max_ttfb'] = round(summary.get('max_ttfb', 0), 2) if summary.get('max_ttfb') else ''
+                    row['summary_std_ttfb'] = round(summary.get('std_ttfb', 0), 2) if summary.get('std_ttfb') else ''
+                    row['summary_good_count'] = summary.get('good_count', '')
+                    row['summary_warning_count'] = summary.get('warning_count', '')
+                    row['summary_poor_count'] = summary.get('poor_count', '')
+                    row['summary_total_tests'] = summary.get('total_tests', '')
+                    row['summary_successful_tests'] = summary.get('successful_tests', '')
+                    row['summary_failed_tests'] = summary.get('failed_tests', '')
+                    
+                    writer.writerow(row)
             
             csv_content = output.getvalue().encode('utf-8')
             
