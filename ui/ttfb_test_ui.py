@@ -33,13 +33,15 @@ import urllib.request
 
 # Configuration
 PORT = 8766
-CONFIG_FILE = Path(__file__).parent / "notebooks" / "config.txt"
-RESULTS_DIR = Path(__file__).parent / "notebooks" / "results"
+CONFIG_FILE = Path(__file__).parent.parent / "notebooks" / "config.txt"
+RESULTS_DIR = Path(__file__).parent.parent / "notebooks" / "results"
 
 # Global state
 test_queue = queue.Queue()
 log_queue = queue.Queue()
 test_running = False
+test_paused = False
+test_stopped = False
 test_results = {}
 current_session_dir = None
 
@@ -333,7 +335,9 @@ def detect_network_info() -> dict:
             interface = client.interface()
             if interface:
                 info['wifi_rssi'] = interface.rssiValue()
-                info['wifi_ssid'] = interface.ssid()
+                ssid = interface.ssid()
+                if ssid:
+                    info['wifi_ssid'] = ssid
                 channel = interface.wlanChannel()
                 if channel:
                     info['wifi_channel'] = channel.channelNumber()
@@ -343,7 +347,30 @@ def detect_network_info() -> dict:
         except Exception:
             pass
         
-        # Method 2: Try networksetup for SSID (works without extra packages)
+        # Method 2: Try airport command (very reliable for RSSI and SSID)
+        if not info['wifi_ssid'] or info['wifi_rssi'] is None:
+            try:
+                airport_path = '/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport'
+                proc = subprocess.run([airport_path, '-I'], capture_output=True, text=True, timeout=5)
+                if proc.returncode == 0:
+                    output = proc.stdout
+                    # Parse SSID
+                    ssid_match = re.search(r'^\s*SSID:\s*(.+)$', output, re.MULTILINE)
+                    if ssid_match and not info['wifi_ssid']:
+                        info['wifi_ssid'] = ssid_match.group(1).strip()
+                    # Parse RSSI (agrCtlRSSI)
+                    rssi_match = re.search(r'^\s*agrCtlRSSI:\s*(-?\d+)$', output, re.MULTILINE)
+                    if rssi_match and info['wifi_rssi'] is None:
+                        info['wifi_rssi'] = int(rssi_match.group(1))
+                    # Parse channel
+                    channel_match = re.search(r'^\s*channel:\s*(\d+)', output, re.MULTILINE)
+                    if channel_match and not info['wifi_channel']:
+                        info['wifi_channel'] = int(channel_match.group(1))
+                        info['wifi_band'] = '5GHz' if info['wifi_channel'] >= 36 else '2.4GHz'
+            except:
+                pass
+        
+        # Method 3: Try networksetup for SSID (works without extra packages)
         if not info['wifi_ssid']:
             try:
                 # Try en0 first (usually WiFi)
@@ -357,7 +384,7 @@ def detect_network_info() -> dict:
             except:
                 pass
         
-        # Method 3: Try system_profiler for channel/band info
+        # Method 4: Try system_profiler for channel/band info
         if not info['wifi_channel']:
             try:
                 proc = subprocess.run(['system_profiler', 'SPAirPortDataType', '-json'],
@@ -474,9 +501,11 @@ def detect_network_info() -> dict:
 
 def run_tests(config: dict):
     """Run TTFB tests."""
-    global test_running, test_results, current_session_dir
+    global test_running, test_results, current_session_dir, test_stopped, test_paused
     
     test_running = True
+    test_stopped = False
+    test_paused = False
     test_results = {
         'session_id': datetime.now().strftime('%Y%m%d_%H%M%S'),
         'start_time': datetime.now().isoformat(),
@@ -596,6 +625,17 @@ def run_tests(config: dict):
             target_results = []
             
             for sample_num in range(1, sample_count + 1):
+                # Check for stop
+                if test_stopped:
+                    add_log('Test stopped by user', 'warning')
+                    test_results['status'] = 'stopped'
+                    test_running = False
+                    return
+                
+                # Check for pause
+                while test_paused and not test_stopped:
+                    time.sleep(0.5)
+                
                 result = measure_ttfb(target_url)
                 result['sample_num'] = sample_num
                 result['target_name'] = domain
@@ -744,6 +784,18 @@ HTML_TEMPLATE = """
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
         }
+        .header-meta {
+            font-size: 0.75em;
+            color: #888;
+            margin-top: 4px;
+        }
+        .header-meta a {
+            color: #3a7bd5;
+            text-decoration: none;
+        }
+        .header-meta a:hover {
+            text-decoration: underline;
+        }
         .header-status {
             display: flex;
             align-items: center;
@@ -758,6 +810,29 @@ HTML_TEMPLATE = """
         .status-badge.ready { background: rgba(76, 175, 80, 0.2); color: #81c784; }
         .status-badge.not-ready { background: rgba(244, 67, 54, 0.2); color: #e57373; }
         .status-badge.running { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
+        .status-badge.paused { background: rgba(255, 152, 0, 0.2); color: #ffb74d; }
+        .status-badge.stopped { background: rgba(158, 158, 158, 0.2); color: #bdbdbd; }
+        
+        /* Control buttons */
+        .control-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        .btn-control {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            font-size: 0.85em;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-pause { background: rgba(255, 152, 0, 0.3); color: #ffb74d; }
+        .btn-pause:hover:not(:disabled) { background: rgba(255, 152, 0, 0.5); }
+        .btn-stop { background: rgba(244, 67, 54, 0.3); color: #ef9a9a; }
+        .btn-stop:hover:not(:disabled) { background: rgba(244, 67, 54, 0.5); }
+        .btn-restart { background: rgba(33, 150, 243, 0.3); color: #90caf9; }
+        .btn-restart:hover:not(:disabled) { background: rgba(33, 150, 243, 0.5); }
+        .btn-control:disabled { opacity: 0.3; cursor: not-allowed; }
         
         /* Tab Bar */
         .tab-bar {
@@ -951,6 +1026,32 @@ HTML_TEMPLATE = """
             background: rgba(255,255,255,0.1);
         }
         
+        /* Collapsible section */
+        .collapsible-header {
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 8px 0;
+        }
+        .collapsible-header:hover {
+            color: #00d2ff;
+        }
+        .collapse-icon {
+            transition: transform 0.3s;
+        }
+        .collapsible-header.collapsed .collapse-icon {
+            transform: rotate(-90deg);
+        }
+        .collapsible-content {
+            max-height: 1000px;
+            overflow: hidden;
+            transition: max-height 0.3s ease-out;
+        }
+        .collapsible-content.collapsed {
+            max-height: 0;
+        }
+        
         /* Network Info Card */
         .network-card {
             background: rgba(255,255,255,0.03);
@@ -1048,6 +1149,60 @@ HTML_TEMPLATE = """
         .loc-badge.approximate {
             background: rgba(255, 152, 0, 0.3);
             color: #ffb74d;
+        }
+        
+        /* Signal Bar */
+        .signal-bar-container {
+            margin-top: 8px;
+        }
+        .signal-bar {
+            height: 8px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .signal-bar-fill {
+            height: 100%;
+            transition: width 0.3s, background 0.3s;
+            border-radius: 4px;
+        }
+        .signal-bar-fill.excellent { background: #4caf50; }
+        .signal-bar-fill.good { background: #8bc34a; }
+        .signal-bar-fill.fair { background: #ffeb3b; }
+        .signal-bar-fill.weak { background: #ff9800; }
+        .signal-bar-fill.poor { background: #f44336; }
+        .signal-labels {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.7em;
+            color: #666;
+            margin-top: 2px;
+        }
+        
+        /* Mini Map */
+        .map-container {
+            width: 100%;
+            height: 150px;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-top: 8px;
+            background: rgba(255,255,255,0.02);
+            position: relative;
+        }
+        .map-container iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+        .map-placeholder {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #666;
+            font-size: 0.85em;
         }
         
         /* Results Summary */
@@ -1219,9 +1374,17 @@ HTML_TEMPLATE = """
     <div class="container">
         <!-- Header -->
         <div class="header">
-            <h1>🔧 NOC Tune</h1>
+            <div>
+                <h1>🔧 NOC Tune</h1>
+                <div class="header-meta">made with ❤️ by <a href="https://github.com/basnugroho" target="_blank">@basnugroho</a> · MIT License · <a href="https://github.com/basnugroho/noctune" target="_blank">contribute</a></div>
+            </div>
             <div class="header-status">
                 <span class="status-badge" id="status-badge">Checking...</span>
+                <div class="control-buttons" id="control-buttons" style="display: none;">
+                    <button class="btn-control btn-pause" id="pause-btn" onclick="pauseTest()" title="Pause">⏸️</button>
+                    <button class="btn-control btn-stop" id="stop-btn" onclick="stopTest()" title="Stop">⏹️</button>
+                    <button class="btn-control btn-restart" id="restart-btn" onclick="restartTest()" title="Restart">🔄</button>
+                </div>
                 <button class="btn btn-primary" id="run-test-btn" disabled onclick="runTests()">
                     <span class="btn-text">▶ Run Test</span>
                 </button>
@@ -1289,18 +1452,22 @@ HTML_TEMPLATE = """
         
         <!-- Results Panel -->
         <div class="results-panel">
-            <div class="panel-title">📋 Prerequisites</div>
-            
-            <div class="prereq-list" id="prereq-list">
-                <!-- Filled by JS -->
-            </div>
-            
             <div id="network-info" style="display: none;">
                 <div class="panel-title">📡 Network Info</div>
                 <div class="network-card">
                     <div class="network-grid" id="network-grid">
                         <!-- Filled by JS -->
                     </div>
+                </div>
+            </div>
+            
+            <div class="collapsible-header collapsed" id="prereq-header" onclick="togglePrereqs()">
+                <div class="panel-title" style="margin-bottom: 0;">📋 Prerequisites</div>
+                <span class="collapse-icon">▼</span>
+            </div>
+            <div class="collapsible-content collapsed" id="prereq-content">
+                <div class="prereq-list" id="prereq-list">
+                    <!-- Filled by JS -->
                 </div>
             </div>
             
@@ -1366,6 +1533,7 @@ HTML_TEMPLATE = """
     <script>
         let isReady = false;
         let isRunning = false;
+        let isPaused = false;
         let pollInterval = null;
         
         // Initialize
@@ -1373,6 +1541,75 @@ HTML_TEMPLATE = """
             loadConfig();
             checkPrereqs();
         });
+        
+        // Toggle prerequisites collapse
+        function togglePrereqs() {
+            const header = document.getElementById('prereq-header');
+            const content = document.getElementById('prereq-content');
+            header.classList.toggle('collapsed');
+            content.classList.toggle('collapsed');
+        }
+        
+        // Pause test
+        async function pauseTest() {
+            if (!isRunning) return;
+            isPaused = !isPaused;
+            
+            try {
+                await fetch('/api/test/pause', { method: 'POST' });
+                
+                const pauseBtn = document.getElementById('pause-btn');
+                const statusBadge = document.getElementById('status-badge');
+                
+                if (isPaused) {
+                    pauseBtn.textContent = '▶️';
+                    pauseBtn.title = 'Resume';
+                    statusBadge.textContent = 'Paused';
+                    statusBadge.className = 'status-badge paused';
+                    addLog('Test paused', 'warning');
+                } else {
+                    pauseBtn.textContent = '⏸️';
+                    pauseBtn.title = 'Pause';
+                    statusBadge.textContent = 'Running';
+                    statusBadge.className = 'status-badge running';
+                    addLog('Test resumed', 'info');
+                }
+            } catch (e) {
+                addLog('Error pausing/resuming: ' + e.message, 'error');
+            }
+        }
+        
+        // Stop test
+        async function stopTest() {
+            if (!isRunning) return;
+            
+            try {
+                await fetch('/api/test/stop', { method: 'POST' });
+                addLog('Test stopped by user', 'warning');
+                
+                if (pollInterval) {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                }
+                
+                resetTestUI();
+                document.getElementById('control-buttons').style.display = 'none';
+                
+                const statusBadge = document.getElementById('status-badge');
+                statusBadge.textContent = 'Stopped';
+                statusBadge.className = 'status-badge stopped';
+            } catch (e) {
+                addLog('Error stopping: ' + e.message, 'error');
+            }
+        }
+        
+        // Restart test
+        async function restartTest() {
+            await stopTest();
+            setTimeout(() => {
+                runTests();
+            }, 500);
+        }
         
         // Load config from server
         async function loadConfig() {
@@ -1498,6 +1735,8 @@ HTML_TEMPLATE = """
             if (!isReady || isRunning) return;
             
             isRunning = true;
+            isPaused = false;
+            
             const runBtn = document.getElementById('run-test-btn');
             runBtn.innerHTML = '<div class="spinner"></div> Running...';
             runBtn.disabled = true;
@@ -1505,6 +1744,11 @@ HTML_TEMPLATE = """
             const statusBadge = document.getElementById('status-badge');
             statusBadge.textContent = 'Running';
             statusBadge.className = 'status-badge running';
+            
+            // Show control buttons
+            document.getElementById('control-buttons').style.display = 'flex';
+            document.getElementById('pause-btn').textContent = '⏸️';
+            document.getElementById('pause-btn').title = 'Pause';
             
             document.getElementById('empty-state').style.display = 'none';
             document.getElementById('test-progress').style.display = 'block';
@@ -1604,66 +1848,104 @@ HTML_TEMPLATE = """
             const rssi = info.wifi_rssi;
             let signalStatus = '❓ Unknown';
             let signalClass = 'unknown';
+            let signalBarClass = 'unknown';
+            let signalPercent = 0;
+            
             if (rssi !== null && rssi !== undefined) {
-                if (rssi >= threshold) {
+                // Calculate signal strength percentage (-100 to -30 dBm range)
+                signalPercent = Math.min(100, Math.max(0, ((rssi + 100) / 70) * 100));
+                
+                if (rssi >= -50) {
+                    signalStatus = '✅ Excellent';
+                    signalClass = 'good';
+                    signalBarClass = 'excellent';
+                } else if (rssi >= -60) {
                     signalStatus = '✅ Good';
                     signalClass = 'good';
-                } else {
+                    signalBarClass = 'good';
+                } else if (rssi >= -70) {
+                    signalStatus = '⚡ Fair';
+                    signalClass = 'warning';
+                    signalBarClass = 'fair';
+                } else if (rssi >= -80) {
                     signalStatus = '⚠️ Weak';
                     signalClass = 'warning';
+                    signalBarClass = 'weak';
+                } else {
+                    signalStatus = '❌ Poor';
+                    signalClass = 'warning';
+                    signalBarClass = 'poor';
                 }
             }
             
-            html += `<div class="network-section">`;
-            html += `<div class="section-header">📶 WiFi Signal <span class="signal-badge ${signalClass}">${signalStatus}</span></div>`;
+            html += '<div class="network-section">';
+            html += '<div class="section-header">📶 WiFi Signal <span class="signal-badge ' + signalClass + '">' + signalStatus + '</span></div>';
             
             if (info.wifi_ssid) {
-                html += `<div class="network-item"><label>SSID</label><div class="value">${info.wifi_ssid}</div></div>`;
+                html += '<div class="network-item"><label>SSID</label><div class="value">' + info.wifi_ssid + '</div></div>';
             } else {
-                html += `<div class="network-item"><label>SSID</label><div class="value muted">Not detected</div></div>`;
+                html += '<div class="network-item"><label>SSID</label><div class="value muted">Not detected</div></div>';
             }
             
             if (rssi !== null && rssi !== undefined) {
-                html += `<div class="network-item"><label>RSSI</label><div class="value">${rssi} dBm <span class="threshold-info">(threshold: ${threshold} dBm)</span></div></div>`;
+                html += '<div class="network-item"><label>RSSI</label><div class="value">' + rssi + ' dBm <span class="threshold-info">(threshold: ' + threshold + ' dBm)</span></div></div>';
+                
+                // Signal bar
+                html += '<div class="signal-bar-container">';
+                html += '<div class="signal-bar"><div class="signal-bar-fill ' + signalBarClass + '" style="width: ' + signalPercent + '%"></div></div>';
+                html += '<div class="signal-labels"><span>Poor</span><span>Weak</span><span>Fair</span><span>Good</span><span>Excellent</span></div>';
+                html += '</div>';
             }
             
             if (info.wifi_band) {
-                const channelInfo = info.wifi_channel ? ` (Ch ${info.wifi_channel})` : '';
-                html += `<div class="network-item"><label>Band</label><div class="value">${info.wifi_band}${channelInfo}</div></div>`;
+                const channelInfo = info.wifi_channel ? ' (Ch ' + info.wifi_channel + ')' : '';
+                html += '<div class="network-item"><label>Band</label><div class="value">' + info.wifi_band + channelInfo + '</div></div>';
             }
             
-            html += `</div>`;
+            html += '</div>';
             
             // DNS section
-            html += `<div class="network-section">`;
-            html += `<div class="section-header">🌐 DNS</div>`;
+            html += '<div class="network-section">';
+            html += '<div class="section-header">🌐 DNS</div>';
             if (info.dns_primary) {
-                html += `<div class="network-item"><label>Primary</label><div class="value">${info.dns_primary}</div></div>`;
+                html += '<div class="network-item"><label>Primary</label><div class="value">' + info.dns_primary + '</div></div>';
             }
             if (info.dns_servers && info.dns_servers.length > 1) {
-                html += `<div class="network-item"><label>All Servers</label><div class="value small">${info.dns_servers.join(', ')}</div></div>`;
+                html += '<div class="network-item"><label>All Servers</label><div class="value small">' + info.dns_servers.join(', ') + '</div></div>';
             }
-            html += `</div>`;
+            html += '</div>';
             
-            // Location section
+            // Location section with map
             if (info.location) {
                 const locMethod = info.location.is_precise ? 'GPS (Browser)' : 'IP Geolocation';
                 const locClass = info.location.is_precise ? 'precise' : 'approximate';
                 const locBadge = info.location.is_precise ? '📍 Precise' : '📍 Approximate';
                 
-                html += `<div class="network-section">`;
-                html += `<div class="section-header">📍 Location <span class="loc-badge ${locClass}">${locBadge}</span></div>`;
-                html += `<div class="network-item"><label>City</label><div class="value">${info.location.city}, ${info.location.region || ''}, ${info.location.country}</div></div>`;
+                html += '<div class="network-section">';
+                html += '<div class="section-header">📍 Location <span class="loc-badge ' + locClass + '">' + locBadge + '</span></div>';
+                html += '<div class="network-item"><label>City</label><div class="value">' + info.location.city + ', ' + (info.location.region || '') + ', ' + info.location.country + '</div></div>';
                 
                 if (info.location.lat && info.location.lon) {
-                    const accuracy = info.location.accuracy ? ` (±${Math.round(info.location.accuracy)}m)` : '';
-                    html += `<div class="network-item"><label>Coordinates${accuracy}</label><div class="value">${info.location.lat.toFixed(5)}, ${info.location.lon.toFixed(5)}</div></div>`;
+                    const accuracy = info.location.accuracy ? ' (±' + Math.round(info.location.accuracy) + 'm)' : '';
+                    html += '<div class="network-item"><label>Coordinates' + accuracy + '</label><div class="value">' + info.location.lat.toFixed(5) + ', ' + info.location.lon.toFixed(5) + '</div></div>';
+                    
+                    // Mini map using OpenStreetMap
+                    const lat = info.location.lat;
+                    const lon = info.location.lon;
+                    const zoom = info.location.is_precise ? 15 : 12;
+                    const mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=' + (lon-0.01) + '%2C' + (lat-0.01) + '%2C' + (lon+0.01) + '%2C' + (lat+0.01) + '&layer=mapnik&marker=' + lat + '%2C' + lon;
+                    
+                    html += '<div class="map-container">';
+                    html += '<iframe src="' + mapUrl + '" loading="lazy"></iframe>';
+                    html += '</div>';
+                } else {
+                    html += '<div class="map-container"><div class="map-placeholder">📍 Coordinates not available</div></div>';
                 }
                 
-                html += `<div class="network-item"><label>ISP</label><div class="value">${info.location.isp || 'N/A'}</div></div>`;
-                html += `<div class="network-item"><label>Public IP</label><div class="value">${info.location.ip || 'N/A'}</div></div>`;
-                html += `<div class="network-item"><label>Method</label><div class="value">${locMethod}</div></div>`;
-                html += `</div>`;
+                html += '<div class="network-item"><label>ISP</label><div class="value">' + (info.location.isp || 'N/A') + '</div></div>';
+                html += '<div class="network-item"><label>Public IP</label><div class="value">' + (info.location.ip || 'N/A') + '</div></div>';
+                html += '<div class="network-item"><label>Method</label><div class="value">' + locMethod + '</div></div>';
+                html += '</div>';
             }
             
             grid.innerHTML = html || '<div class="network-item"><label>Status</label><div class="value">Detecting...</div></div>';
@@ -1775,9 +2057,14 @@ HTML_TEMPLATE = """
         // Reset test UI
         function resetTestUI() {
             isRunning = false;
+            isPaused = false;
+            
             const runBtn = document.getElementById('run-test-btn');
             runBtn.innerHTML = '<span class="btn-text">▶ Run Test</span>';
             runBtn.disabled = !isReady;
+            
+            // Hide control buttons
+            document.getElementById('control-buttons').style.display = 'none';
             
             const statusBadge = document.getElementById('status-badge');
             statusBadge.textContent = isReady ? 'Ready' : 'Not Ready';
@@ -2056,6 +2343,8 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json({'error': str(e)})
     
     def do_POST(self):
+        global test_paused, test_stopped
+        
         content_length = int(self.headers.get('Content-Length', 0))
         post_data = self.rfile.read(content_length).decode()
         
@@ -2073,12 +2362,24 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 try:
                     config = json.loads(post_data)
+                    # Reset control flags
+                    test_paused = False
+                    test_stopped = False
                     # Start test in background thread
                     thread = threading.Thread(target=run_tests, args=(config,), daemon=True)
                     thread.start()
                     self.send_json({'success': True})
                 except Exception as e:
                     self.send_json({'success': False, 'error': str(e)})
+        
+        elif self.path == '/api/test/pause':
+            test_paused = not test_paused
+            self.send_json({'success': True, 'paused': test_paused})
+        
+        elif self.path == '/api/test/stop':
+            test_stopped = True
+            self.send_json({'success': True})
+        
         else:
             self.send_response(404)
             self.end_headers()

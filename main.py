@@ -94,7 +94,7 @@ def run_check():
 
 def run_location():
     """Run the precise location script."""
-    from get_location import main as location_main
+    from ui.get_location import main as location_main
     location_main()
 
 
@@ -104,7 +104,7 @@ def run_ui(port: int = 8766):
     os.chdir(PROJECT_ROOT)
     
     # Modify port in the module
-    import ttfb_test_ui
+    from ui import ttfb_test_ui
     ttfb_test_ui.PORT = port
     
     print(f"🚀 Starting NOC Tune TTFB Test UI on port {port}...")

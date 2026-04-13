@@ -32,7 +32,7 @@ from datetime import datetime
 
 # Configuration
 PORT = 8765
-OUTPUT_FILE = Path(__file__).parent / "notebooks" / "precise_location.json"
+OUTPUT_FILE = Path(__file__).parent.parent / "notebooks" / "precise_location.json"
 TIMEOUT_SECONDS = 120  # Auto-close after 2 minutes
 
 # Global state

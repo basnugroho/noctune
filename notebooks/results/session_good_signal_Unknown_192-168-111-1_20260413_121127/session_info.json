@@ -1,0 +1,49 @@
+{
+  "session_id": "20260413_121127",
+  "start_time": "2026-04-13T12:11:27.035462",
+  "end_time": "2026-04-13T12:21:39.739622",
+  "config": {
+    "TARGETS": [
+      "https://www.instagram.com",
+      "https://qt-google-cloud-cdn.bronze.systems"
+    ],
+    "SAMPLE_COUNT": 10,
+    "DELAY_SECONDS": 30,
+    "PING_DURATION": 60,
+    "TTFB_GOOD_MS": 600,
+    "TTFB_WARNING_MS": 800,
+    "SIGNAL_THRESHOLD_DBM": -65
+  },
+  "network_info": {
+    "wifi_ssid": null,
+    "wifi_rssi": -41,
+    "wifi_band": null,
+    "wifi_channel": null,
+    "dns_primary": "192.168.111.1",
+    "dns_servers": [
+      "192.168.111.1"
+    ],
+    "location": {
+      "city": "Jakarta",
+      "region": "Jakarta",
+      "country": "Indonesia",
+      "lat": -6.18104,
+      "lon": 106.826,
+      "isp": "PT. TELKOM INDONESIA",
+      "ip": "118.97.180.50",
+      "is_precise": false,
+      "method": "IP Geolocation"
+    }
+  },
+  "summary": {
+    "total_tests": 20,
+    "successful_tests": 20,
+    "failed_tests": 0,
+    "mean_ttfb": 239.12800000000001,
+    "min_ttfb": 103.71,
+    "max_ttfb": 475.82,
+    "good_count": 20,
+    "warning_count": 0,
+    "poor_count": 0
+  }
+}
