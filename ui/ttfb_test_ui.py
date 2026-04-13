@@ -67,6 +67,29 @@ STATIC_ASSETS = {
 }
 
 
+def normalize_target_url(value: str) -> str:
+    """Ensure target values are valid absolute URLs for curl and the contribute API."""
+    text = (value or '').strip()
+    if not text:
+        return ''
+    if re.match(r'^[A-Za-z][A-Za-z0-9+.-]*://', text):
+        return text
+    return f'https://{text}'
+
+
+def normalize_target_urls(values) -> list[str]:
+    """Normalize and deduplicate target URL values while preserving order."""
+    normalized = []
+    seen = set()
+    for value in values or []:
+        url = normalize_target_url(value)
+        if not url or url in seen:
+            continue
+        normalized.append(url)
+        seen.add(url)
+    return normalized
+
+
 def sanitize_filename_part(value: str, fallback: str = "Unknown") -> str:
     """Convert arbitrary text to a safe filename fragment."""
     text = (value or fallback).strip()
@@ -175,7 +198,7 @@ def parse_config(config_path: Path) -> dict:
                 value = value.strip()
                 
                 if key == 'TARGETS':
-                    config['TARGETS'] = [t.strip() for t in value.split(',') if t.strip()]
+                    config['TARGETS'] = normalize_target_urls([t.strip() for t in value.split(',') if t.strip()])
                 elif key in ['SAMPLE_COUNT', 'DELAY_SECONDS', 'PING_DURATION', 
                            'SIGNAL_THRESHOLD_DBM', 'TTFB_GOOD_MS', 'TTFB_WARNING_MS']:
                     config[key] = int(value)
@@ -193,6 +216,7 @@ def save_config(config: dict, config_path: Path) -> bool:
     """Save config to file."""
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
+        normalized_targets = normalize_target_urls(config.get('TARGETS', []))
         
         with open(config_path, 'w') as f:
             f.write("# NOC Tune Configuration\n")
@@ -200,7 +224,7 @@ def save_config(config: dict, config_path: Path) -> bool:
             f.write(f"# Last updated: {datetime.now().isoformat()}\n\n")
             
             f.write("# Target URLs (comma-separated)\n")
-            f.write(f"TARGETS = {', '.join(config.get('TARGETS', []))}\n\n")
+            f.write(f"TARGETS = {', '.join(normalized_targets)}\n\n")
             
             f.write("# Test Parameters\n")
             f.write(f"SAMPLE_COUNT = {config.get('SAMPLE_COUNT', 5)}\n")
@@ -361,6 +385,7 @@ def add_log(message: str, level: str = 'info'):
 
 def measure_ttfb(url: str) -> dict:
     """Measure TTFB for a single URL."""
+    normalized_url = normalize_target_url(url)
     curl_format = (
         '{"time_namelookup": %{time_namelookup}, '
         '"time_connect": %{time_connect}, '
@@ -378,11 +403,11 @@ def measure_ttfb(url: str) -> dict:
         '-s',
         '-w', curl_format,
         '--max-time', '30',
-        url
+        normalized_url
     ]
     
     result = {
-        'url': url,
+        'url': normalized_url,
         'ttfb_ms': None,
         'lookup_ms': None,
         'connect_ms': None,
@@ -889,8 +914,11 @@ def run_tests(config: dict):
         all_results = []
         
         for target_idx, target_url in enumerate(targets, 1):
-            domain = urlparse(target_url).netloc
-            add_log(f"Testing target {target_idx}/{len(targets)}: {domain}", 'info')
+            normalized_target_url = normalize_target_url(target_url)
+            parsed_target = urlparse(normalized_target_url)
+            target_name = normalized_target_url
+            display_name = parsed_target.netloc or normalized_target_url
+            add_log(f"Testing target {target_idx}/{len(targets)}: {display_name}", 'info')
             
             target_results = []
             
@@ -910,9 +938,9 @@ def run_tests(config: dict):
                 if not test_paused and not test_stopped and sample_num > 1:
                     pass  # resumed message handled by POST handler
                 
-                result = measure_ttfb(target_url)
+                result = measure_ttfb(normalized_target_url)
                 result['sample_num'] = sample_num
-                result['target_name'] = domain
+                result['target_name'] = target_name
                 result['timestamp'] = datetime.now().isoformat()
                 result['time_short'] = datetime.now().strftime('%H:%M:%S')
                 
@@ -969,7 +997,7 @@ def run_tests(config: dict):
             if valid_results:
                 ttfbs = [r['ttfb_ms'] for r in valid_results]
                 avg_ttfb = sum(ttfbs) / len(ttfbs)
-                add_log(f"  → {domain} average: {avg_ttfb:.0f}ms", 'info')
+                add_log(f"  → {display_name} average: {avg_ttfb:.0f}ms", 'info')
         
         # Calculate overall summary
         add_log('', 'divider')
@@ -1326,6 +1354,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == '/api/config':
             try:
                 config = json.loads(post_data)
+                config['TARGETS'] = normalize_target_urls(config.get('TARGETS', []))
                 success = save_config(config, CONFIG_FILE)
                 self.send_json({'success': success})
             except Exception as e:
@@ -1363,6 +1392,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 try:
                     config = json.loads(post_data)
+                    config['TARGETS'] = normalize_target_urls(config.get('TARGETS', []))
                     # Reset control flags
                     test_paused = False
                     test_stopped = False
