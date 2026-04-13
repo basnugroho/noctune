@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NOC Tune - TTFB Test</title>
+        <link rel="stylesheet" href="/static/ttfb_test_ui.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div>
+                <h1>🔧 NOC Tune</h1>
+            </div>
+            <div class="header-status">
+                <span class="status-badge" id="status-badge">Checking...</span>
+                <span class="mode-badge on" id="auto-contribute-badge">Auto Contribute: ON</span>
+                <div class="control-buttons" id="control-buttons" style="display: none;">
+                    <button class="btn-control btn-pause" id="pause-btn" onclick="pauseTest()" title="Pause">⏸️</button>
+                    <button class="btn-control btn-stop" id="stop-btn" onclick="stopTest()" title="Stop">⏹️</button>
+                    <button class="btn-control btn-restart" id="restart-btn" onclick="restartTest()" title="Restart">🔄</button>
+                </div>
+                <button class="btn btn-primary" id="run-test-btn" disabled onclick="runTests()">
+                    <span class="btn-text">▶ Run Test</span>
+                </button>
+            </div>
+        </div>
+        
+        <!-- Tab Bar -->
+        <div class="tab-bar">
+            <div class="tab active" data-tab="ttfb">TTFB Test</div>
+            <div class="tab disabled" data-tab="latency">Latency <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="packet-loss">Packet Loss <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="download">Download Speed <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="upload">Upload Speed <span class="tab-badge">Soon</span></div>
+            <div class="tab" data-tab="privacy">Privacy Policy</div>
+            <div class="tab" data-tab="about">About</div>
+            <div class="network-url-box" id="network-url-box" style="display: none;">
+                <span class="network-url-label">🌐 Network:</span>
+                <span class="network-url-value" id="network-url" onclick="copyNetworkUrl()" title="Click to copy"></span>
+            </div>
+        </div>
+
+        <div class="info-page" id="privacy-page">
+            <div class="info-hero">
+                <h2>Privacy Policy</h2>
+                <p>NOC Tune membantu mengukur kualitas akses ke website target. Beberapa data teknis dibaca agar hasilnya lebih akurat. Anda tetap memegang kendali penuh, terutama untuk fitur contribute yang bisa dibuat otomatis atau manual.</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Data yang dibaca saat test</h3>
+                    <ul class="info-list">
+                        <li>Hasil TTFB, DNS lookup, connect time, total time, dan status HTTP.</li>
+                        <li>Informasi perangkat dan jaringan seperti nama device, OS, RSSI, SSID, band WiFi, channel, DNS, ISP, dan IP publik.</li>
+                        <li>Koordinat lokasi jika browser geolocation diizinkan, agar hasil test mewakili lokasi sebenarnya.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Data yang disimpan lokal</h3>
+                    <ul class="info-list">
+                        <li>Session info, hasil ping, hasil TTFB, CSV, dan report di folder results.</li>
+                        <li>Config test seperti target, threshold, brand, no internet, dan pilihan auto contribute.</li>
+                        <li>Lokasi presisi terakhir di file lokal agar export dan report tetap konsisten.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Kapan data dikirim keluar</h3>
+                    <ul class="info-list">
+                        <li>Jika Auto Contribute aktif, setiap row hasil test akan langsung dikirim ke qosmic.solusee.id.</li>
+                        <li>Jika Auto Contribute mati, data tidak dikirim otomatis dan hanya terkirim saat tombol Contribute ditekan.</li>
+                        <li>Reverse geocoding memakai layanan OpenStreetMap untuk mengubah koordinat menjadi nama kota/region.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Kendali di tangan user</h3>
+                    <ul class="info-list">
+                        <li>Anda bisa menyalakan atau mematikan Auto Contribute dari Configuration.</li>
+                        <li>Brand dan No Internet bersifat opsional dan bisa dikosongkan.</li>
+                        <li>Anda bisa menjalankan test hanya untuk kebutuhan lokal tanpa mengirim hasil ke layanan kontribusi.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="info-note">Ringkasnya: aplikasi ini fokus pada data teknis jaringan untuk kebutuhan pengukuran. Pengiriman ke layanan QoSMic bersifat opsional dan bisa diatur dari config.</div>
+        </div>
+
+        <div class="info-page" id="about-page">
+            <div class="info-hero">
+                <h2>About NOC Tune</h2>
+                <p>NOC Tune adalah aplikasi browser-based untuk mengukur Time To First Byte secara otomatis. Tool ini membantu melihat kualitas akses ke target tertentu dengan cepat, lengkap, dan mudah dipahami.</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Apa yang dilakukan aplikasi ini</h3>
+                    <ul class="info-list">
+                        <li>Mengukur TTFB ke satu atau banyak target secara berulang.</li>
+                        <li>Mencatat detail teknis jaringan saat test berlangsung.</li>
+                        <li>Menampilkan hasil secara real-time di browser.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Kelebihan utamanya</h3>
+                    <ul class="info-list">
+                        <li>Auto ukur TTFB tanpa perlu command manual berulang.</li>
+                        <li>Auto mencatat detail penting seperti DNS, WiFi, lokasi, ISP, dan perangkat.</li>
+                        <li>Visualisasi hasil dalam tabel, summary card, dan chart.</li>
+                        <li>Hasil bisa diunduh sebagai CSV dan report.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Contribute ke QoSMic</h3>
+                    <p>NOC Tune bisa mengirim hasil ke qosmic.solusee.id agar data pengukuran terkumpul. Fitur ini opsional. Anda bisa memilih submit otomatis per row atau submit manual setelah test selesai.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Cocok dipakai untuk</h3>
+                    <ul class="info-list">
+                        <li>Validasi kualitas akses ke CDN atau website tertentu.</li>
+                        <li>Membandingkan kondisi jaringan antar lokasi atau antar band WiFi.</li>
+                        <li>Membuat bukti teknis yang lebih lengkap saat troubleshooting.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="info-note">Singkatnya: NOC Tune membantu Anda mengukur TTFB secara otomatis, melihat konteks jaringan dengan lebih lengkap, dan membagikan hasil ke QoSMic bila memang dibutuhkan.</div>
+        </div>
+        
+        <!-- Config Panel -->
+        <div class="config-panel">
+            <div class="panel-title">⚙️ Configuration</div>
+            
+            <div class="config-section">
+                <h3>Target URLs</h3>
+                <div class="form-group">
+                    <div class="url-tags-container" id="url-tags-container"></div>
+                    <input type="text" id="url-input" placeholder="Type URL and press Enter" onkeydown="handleUrlInput(event)">
+                    <small>Press Enter to add URL</small>
+                </div>
+            </div>
+            
+            <div class="config-section">
+                <h3>Test Parameters</h3>
+                <div class="form-group">
+                    <label>Samples per target</label>
+                    <input type="number" id="sample-count" value="5" min="1" max="100">
+                </div>
+                <div class="form-group">
+                    <label>Delay between samples (seconds)</label>
+                    <input type="number" id="delay-seconds" value="2" min="0" max="60">
+                </div>
+                <div class="form-group">
+                    <label>Ping duration (seconds)</label>
+                    <input type="number" id="ping-duration" value="10" min="1" max="120">
+                </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 0;">
+                        <input type="checkbox" id="auto-contribute" checked style="width: auto;">
+                        <span>Auto Contribute</span>
+                    </label>
+                    <small>Default aktif. Jika aktif, setiap row hasil test langsung dikirim ke qosmic.solusee.id.</small>
+                </div>
+            </div>
+            
+            <div class="config-section">
+                <h3>Thresholds</h3>
+                <div class="form-group">
+                    <label>Good TTFB (ms)</label>
+                    <input type="number" id="ttfb-good" value="200" min="1">
+                    <small>Below this = Good</small>
+                </div>
+                <div class="form-group">
+                    <label>Warning TTFB (ms)</label>
+                    <input type="number" id="ttfb-warning" value="500" min="1">
+                    <small>Below this = Warning, Above = Poor</small>
+                </div>
+                <div class="form-group">
+                    <label>Signal threshold (dBm)</label>
+                    <input type="number" id="signal-threshold" value="-70" max="0">
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>Contribution Metadata</h3>
+                <div class="form-group">
+                    <label>Brand</label>
+                    <input type="text" id="brand" placeholder="indihome">
+                    <small>Optional. Akan ikut disubmit ke QoSMic saat contribute manual atau otomatis.</small>
+                </div>
+                <div class="form-group">
+                    <label>No Internet</label>
+                    <input type="text" id="no-internet" placeholder="152606221682">
+                    <small>Optional. Akan ikut disubmit ke QoSMic saat contribute manual atau otomatis.</small>
+                </div>
+            </div>
+            
+            <div class="btn-group">
+                <button class="btn btn-secondary" onclick="saveConfig()">💾 Save</button>
+                <button class="btn btn-secondary" onclick="loadConfig()">🔄 Reload</button>
+                <button class="btn btn-secondary" onclick="resetToDefaults()" title="Reset to original default values">⏮ Default</button>
+            </div>
+        </div>
+        
+        <!-- Results Panel -->
+        <div class="results-panel">
+            <div id="empty-state" class="empty-state">
+                <div class="empty-state-icon">📊</div>
+                <h3>Belum ada hasil tes</h3>
+                <p>Results dan Charts akan muncul di sini setelah test dijalankan.</p>
+            </div>
+
+            <div id="results-section" style="display: none;">
+                <div class="panel-title">📊 Results</div>
+
+                <!-- Charts Section -->
+                <div id="charts-section" style="display: none; margin-top: 12px;">
+                    <div class="panel-title">📈 Charts</div>
+                    <div class="charts-grid">
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Distribution by Target</div>
+                            <canvas id="chart-boxplot" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Mean TTFB Comparison</div>
+                            <canvas id="chart-bar" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Over Time</div>
+                            <canvas id="chart-line" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Status Distribution</div>
+                            <canvas id="chart-pie" width="400" height="280"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-header" id="results-list-header" onclick="toggleResultsList()">
+                    <div class="panel-title" style="margin-bottom: 0;">📋 Results List</div>
+                    <span class="collapse-icon">▼</span>
+                </div>
+                <div class="collapsible-content" id="results-list-content">
+                    <div class="summary-cards" id="summary-cards">
+                        <!-- Filled by JS -->
+                    </div>
+
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        <table class="results-table results-table-expanded">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Target</th>
+                                    <th>#</th>
+                                    <th>TTFB</th>
+                                    <th>RSSI</th>
+                                    <th>Band</th>
+                                    <th>DNS</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-tbody">
+                                <!-- Filled by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div id="download-section" style="display: none; margin-top: 16px;">
+                        <div class="btn-group">
+                            <button class="btn btn-success" onclick="downloadCSV()" id="download-csv-btn">📥 Download CSV</button>
+                            <button class="btn btn-primary" onclick="downloadReport()" id="download-report-btn">📄 Download Report</button>
+                            <button class="btn btn-secondary" onclick="contributeResults()" id="contribute-btn">🤝 Contribute</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="test-progress" style="display: none;">
+                <div class="panel-title">⏳ Test Progress</div>
+                <div class="progress-details">
+                    <span id="progress-count">0 / 0</span>
+                    <span id="progress-percent">0%</span>
+                    <span id="progress-eta">ETA: --</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="fill" id="progress-fill" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div id="network-info" style="display: none;">
+                <div class="panel-title">📡 Network Info</div>
+                <div class="network-card">
+                    <div class="network-grid" id="network-grid">
+                        <!-- Filled by JS -->
+                    </div>
+                </div>
+                <!-- Persistent map container (not rebuilt on updates) -->
+                <div id="persistent-map" style="display: none;">
+                    <div class="map-container">
+                        <iframe id="map-iframe" loading="lazy" style="width:100%;height:100%;border:none;"></iframe>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="collapsible-header" id="prereq-header" onclick="togglePrereqs()">
+                <div class="panel-title" style="margin-bottom: 0;">📋 Prerequisites</div>
+                <span class="collapse-icon">▼</span>
+            </div>
+            <div class="collapsible-content" id="prereq-content">
+                <div class="prereq-list" id="prereq-list">
+                    <!-- Filled by JS -->
+                </div>
+            </div>
+        </div>
+        
+        <!-- Logs Panel -->
+        <div class="logs-panel">
+            <div class="logs-header">
+                <h2>📜 Logs</h2>
+                <button class="clear-logs" onclick="clearLogs()">Clear</button>
+            </div>
+            <div class="logs-content" id="logs-content">
+                <div class="log-entry info">
+                    <span class="log-timestamp">[--:--:--]</span>
+                    Ready to run tests...
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            made with ❤️ by <a href="https://github.com/basnugroho" target="_blank">@basnugroho</a> · MIT License · <a href="https://github.com/basnugroho/noctune" target="_blank">contribute</a>
+        </div>
+    </div>
+    
+    <script src="/static/ttfb_test_ui.js"></script>
+</body>
+</html>

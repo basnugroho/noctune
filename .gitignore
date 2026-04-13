@@ -3,6 +3,7 @@ venv/
 .venv/
 env/
 .env/
+.env
 
 # Python
 __pycache__/
@@ -18,8 +19,8 @@ __pycache__/
 *.ipynb_checkpoints
 
 # Results (keep directory, ignore data files)
-results/
-notebooks/results/
+notebooks/results/*
+!notebooks/results/.gitkeep
 
 # IDE
 .vscode/
@@ -44,4 +45,3 @@ tools/GetSSID.app/
 
 # Generated notebook artifacts
 notebooks/precise_location.json
-notebooks/results/*
