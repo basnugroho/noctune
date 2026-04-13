@@ -314,6 +314,11 @@ def detect_network_info() -> dict:
     """Detect current network information."""
     info = {
         'device_name': None,
+        'device_model': None,
+        'os_name': None,
+        'os_version': None,
+        'battery_level': None,
+        'battery_charging': None,
         'wifi_ssid': None,
         'wifi_rssi': None,
         'wifi_band': None,
@@ -326,6 +331,81 @@ def detect_network_info() -> dict:
     }
     
     system = platform.system()
+    
+    # Get OS info
+    info['os_name'] = system
+    try:
+        if system == 'Darwin':
+            proc = subprocess.run(['sw_vers', '-productVersion'], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                info['os_version'] = f"macOS {proc.stdout.strip()}"
+        elif system == 'Windows':
+            info['os_version'] = f"Windows {platform.release()}"
+        else:
+            info['os_version'] = f"{system} {platform.release()}"
+    except:
+        info['os_version'] = platform.release()
+    
+    # Get device model
+    if system == 'Darwin':
+        try:
+            # Get Mac model identifier
+            proc = subprocess.run(['sysctl', '-n', 'hw.model'], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                model_id = proc.stdout.strip()
+                # Try to get human-readable name
+                proc2 = subprocess.run(
+                    ['system_profiler', 'SPHardwareDataType'],
+                    capture_output=True, text=True, timeout=10
+                )
+                if proc2.returncode == 0:
+                    match = re.search(r'Model Name:\s*(.+)', proc2.stdout)
+                    if match:
+                        info['device_model'] = match.group(1).strip()
+                    else:
+                        info['device_model'] = model_id
+                else:
+                    info['device_model'] = model_id
+        except:
+            pass
+    elif system == 'Windows':
+        try:
+            proc = subprocess.run(['wmic', 'computersystem', 'get', 'model'], 
+                                capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                lines = [l.strip() for l in proc.stdout.strip().split('\n') if l.strip() and l.strip() != 'Model']
+                if lines:
+                    info['device_model'] = lines[0]
+        except:
+            pass
+    
+    # Get battery info
+    if system == 'Darwin':
+        try:
+            proc = subprocess.run(['pmset', '-g', 'batt'], capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                output = proc.stdout
+                # Parse battery percentage
+                match = re.search(r'(\d+)%', output)
+                if match:
+                    info['battery_level'] = int(match.group(1))
+                # Check if charging
+                info['battery_charging'] = 'AC Power' in output or 'charging' in output.lower()
+        except:
+            pass
+    elif system == 'Windows':
+        try:
+            proc = subprocess.run(['WMIC', 'PATH', 'Win32_Battery', 'Get', 'EstimatedChargeRemaining,BatteryStatus'],
+                                capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                lines = proc.stdout.strip().split('\n')
+                if len(lines) > 1:
+                    parts = lines[1].split()
+                    if len(parts) >= 2:
+                        info['battery_level'] = int(parts[1]) if parts[1].isdigit() else None
+                        info['battery_charging'] = parts[0] == '2'  # 2 = charging
+        except:
+            pass
     
     # Get device name
     if system == 'Darwin':
@@ -514,6 +594,27 @@ def detect_network_info() -> dict:
                     info['location']['accuracy'] = precise_data.get('accuracy')
                     info['location']['is_precise'] = True
                     info['location']['method'] = 'GPS (Browser)'
+                    
+                    # Reverse geocode to get city from precise coordinates
+                    try:
+                        lat = precise_data.get('latitude')
+                        lon = precise_data.get('longitude')
+                        rgeo_url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&zoom=10"
+                        rgeo_req = urllib.request.Request(rgeo_url, headers={'User-Agent': 'NOC-Tune/1.0'})
+                        with urllib.request.urlopen(rgeo_req, timeout=5) as rgeo_resp:
+                            rgeo_data = json.loads(rgeo_resp.read().decode())
+                            addr = rgeo_data.get('address', {})
+                            city = addr.get('city') or addr.get('town') or addr.get('municipality') or addr.get('county')
+                            if city:
+                                info['location']['city'] = city
+                            region = addr.get('state')
+                            if region:
+                                info['location']['region'] = region
+                            country = addr.get('country')
+                            if country:
+                                info['location']['country'] = country
+                    except:
+                        pass  # Keep IP-based city if reverse geocode fails
         except:
             pass
     
@@ -796,24 +897,25 @@ HTML_TEMPLATE = """
         .container {
             display: grid;
             grid-template-columns: 350px 1fr 400px;
-            grid-template-rows: auto auto 1fr;
+            grid-template-rows: auto auto 1fr auto;
             gap: 0;
             height: 100vh;
         }
         .header {
             grid-column: 1 / -1;
             background: linear-gradient(90deg, #1a1a2e, #16213e);
-            padding: 16px 24px;
+            padding: 10px 24px;
             display: flex;
             align-items: center;
             justify-content: space-between;
             border-bottom: 1px solid rgba(255,255,255,0.1);
         }
         .header h1 {
-            font-size: 1.5em;
+            font-size: 1.3em;
             background: linear-gradient(90deg, #00d2ff, #3a7bd5);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
+            margin: 0;
         }
         .header-meta {
             font-size: 0.75em;
@@ -827,29 +929,47 @@ HTML_TEMPLATE = """
         .header-meta a:hover {
             text-decoration: underline;
         }
-        .header-network {
-            font-size: 0.75em;
+        .network-url-box {
+            padding: 6px 12px;
+            background: rgba(0, 210, 255, 0.08);
+            border: 1px solid rgba(0, 210, 255, 0.2);
+            border-radius: 6px;
+            font-size: 0.8em;
+            margin-left: auto;
+            white-space: nowrap;
+        }
+        .network-url-label {
             color: #888;
-            margin-top: 4px;
-            font-family: 'SF Mono', Consolas, Monaco, monospace;
         }
-        .header-network a {
+        .network-url-value {
             color: #00d2ff;
-            text-decoration: none;
+            font-family: 'SF Mono', Consolas, Monaco, monospace;
+            cursor: pointer;
+            margin-left: 4px;
         }
-        .header-network a:hover {
+        .network-url-value:hover {
             text-decoration: underline;
         }
+        .network-url-value.copied {
+            color: #4caf50;
+        }
         .header-status {
+            display: flex;
+            flex-direction: row;
+            align-items: center;
+            gap: 10px;
+        }
+        .header-controls {
             display: flex;
             align-items: center;
             gap: 12px;
         }
         .status-badge {
-            padding: 6px 14px;
+            padding: 4px 12px;
             border-radius: 20px;
-            font-size: 0.85em;
+            font-size: 0.8em;
             font-weight: 500;
+            white-space: nowrap;
         }
         .status-badge.ready { background: rgba(76, 175, 80, 0.2); color: #81c784; }
         .status-badge.not-ready { background: rgba(244, 67, 54, 0.2); color: #e57373; }
@@ -883,6 +1003,7 @@ HTML_TEMPLATE = """
             grid-column: 1 / -1;
             background: #16213e;
             display: flex;
+            align-items: center;
             gap: 0;
             padding: 0 24px;
             border-bottom: 1px solid rgba(255,255,255,0.1);
@@ -1230,14 +1351,15 @@ HTML_TEMPLATE = """
             margin-top: 2px;
         }
         
-        /* Mini Map */
+        /* Mini Map - Compact */
         .map-container {
             width: 100%;
-            height: 150px;
+            height: 120px;
             border-radius: 8px;
             overflow: hidden;
             background: rgba(255,255,255,0.02);
             position: relative;
+            margin-top: 10px;
         }
         .map-container iframe {
             width: 100%;
@@ -1254,20 +1376,31 @@ HTML_TEMPLATE = """
             font-size: 0.85em;
         }
         
-        /* Location 2-column layout */
+        /* Location layout - map on top, info below */
         .location-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
-        }
-        .location-info {
             display: flex;
             flex-direction: column;
+            gap: 10px;
+        }
+        .location-info {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
             gap: 8px;
         }
         .location-map {
-            display: flex;
-            flex-direction: column;
+            width: 100%;
+            order: -1;
+        }
+        .location-map .map-container {
+            height: 160px;
+            margin-top: 0;
+        }
+        
+        /* Device info grid */
+        .device-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
         }
         
         /* Results Summary */
@@ -1466,6 +1599,24 @@ HTML_TEMPLATE = """
         ::-webkit-scrollbar-thumb:hover {
             background: rgba(255,255,255,0.15);
         }
+        
+        /* Footer */
+        .footer {
+            grid-column: 1 / -1;
+            background: #0f0f23;
+            padding: 12px 24px;
+            text-align: center;
+            font-size: 0.75em;
+            color: #555;
+            border-top: 1px solid rgba(255,255,255,0.05);
+        }
+        .footer a {
+            color: #3a7bd5;
+            text-decoration: none;
+        }
+        .footer a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -1474,8 +1625,6 @@ HTML_TEMPLATE = """
         <div class="header">
             <div>
                 <h1>🔧 NOC Tune</h1>
-                <div class="header-meta">made with ❤️ by <a href="https://github.com/basnugroho" target="_blank">@basnugroho</a> · MIT License · <a href="https://github.com/basnugroho/noctune" target="_blank">contribute</a></div>
-                <div class="header-network" id="network-url"></div>
             </div>
             <div class="header-status">
                 <span class="status-badge" id="status-badge">Checking...</span>
@@ -1495,6 +1644,10 @@ HTML_TEMPLATE = """
             <div class="tab active" data-tab="ttfb">TTFB Test</div>
             <div class="tab disabled" data-tab="speed">Speed Test <span class="tab-badge">Soon</span></div>
             <div class="tab disabled" data-tab="latency">Latency Map <span class="tab-badge">Soon</span></div>
+            <div class="network-url-box" id="network-url-box" style="display: none;">
+                <span class="network-url-label">🌐 Network:</span>
+                <span class="network-url-value" id="network-url" onclick="copyNetworkUrl()" title="Click to copy"></span>
+            </div>
         </div>
         
         <!-- Config Panel -->
@@ -1558,13 +1711,19 @@ HTML_TEMPLATE = """
                         <!-- Filled by JS -->
                     </div>
                 </div>
+                <!-- Persistent map container (not rebuilt on updates) -->
+                <div id="persistent-map" style="display: none;">
+                    <div class="map-container">
+                        <iframe id="map-iframe" loading="lazy" style="width:100%;height:100%;border:none;"></iframe>
+                    </div>
+                </div>
             </div>
             
-            <div class="collapsible-header collapsed" id="prereq-header" onclick="togglePrereqs()">
+            <div class="collapsible-header" id="prereq-header" onclick="togglePrereqs()">
                 <div class="panel-title" style="margin-bottom: 0;">📋 Prerequisites</div>
                 <span class="collapse-icon">▼</span>
             </div>
-            <div class="collapsible-content collapsed" id="prereq-content">
+            <div class="collapsible-content" id="prereq-content">
                 <div class="prereq-list" id="prereq-list">
                     <!-- Filled by JS -->
                 </div>
@@ -1636,6 +1795,11 @@ HTML_TEMPLATE = """
                 </div>
             </div>
         </div>
+        
+        <!-- Footer -->
+        <div class="footer">
+            made with ❤️ by <a href="https://github.com/basnugroho" target="_blank">@basnugroho</a> · MIT License · <a href="https://github.com/basnugroho/noctune" target="_blank">contribute</a>
+        </div>
     </div>
     
     <script>
@@ -1644,24 +1808,109 @@ HTML_TEMPLATE = """
         let isPaused = false;
         let pollInterval = null;
         let lastMapCoords = null;  // Track map coordinates to prevent flickering
+        let browserLocation = null;  // Browser geolocation override
+        let cachedNetworkInfo = null;  // Last network info from server
         
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             loadConfig();
             checkPrereqs();
-            showNetworkUrl();
+            loadNetworkInfo();
+            requestBrowserLocation();
         });
         
-        // Show network access URL
-        function showNetworkUrl() {
-            const host = window.location.host;
-            const protocol = window.location.protocol;
-            const url = `${protocol}//${host}`;
+        // Request browser geolocation for precise coordinates
+        function requestBrowserLocation() {
+            if (!navigator.geolocation) return;
+            
+            navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                    const lat = position.coords.latitude;
+                    const lon = position.coords.longitude;
+                    const accuracy = position.coords.accuracy;
+                    
+                    browserLocation = {
+                        lat: lat,
+                        lon: lon,
+                        accuracy: accuracy,
+                        is_precise: true,
+                        method: 'GPS (Browser)'
+                    };
+                    
+                    // Reverse geocode to get city name
+                    try {
+                        const rgeoUrl = `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&zoom=10`;
+                        const resp = await fetch(rgeoUrl, { headers: { 'User-Agent': 'NOC-Tune/1.0' } });
+                        const data = await resp.json();
+                        const addr = data.address || {};
+                        browserLocation.city = addr.city || addr.town || addr.municipality || addr.county;
+                        browserLocation.region = addr.state;
+                        browserLocation.country = addr.country;
+                    } catch (e) {
+                        console.error('Reverse geocode error:', e);
+                    }
+                    
+                    // Re-render with precise location
+                    if (cachedNetworkInfo) {
+                        updateNetworkInfo(cachedNetworkInfo);
+                    }
+                },
+                (err) => {
+                    console.log('Browser geolocation not available:', err.message);
+                },
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
+            );
+        }
+        
+        // Load network info and show URL
+        async function loadNetworkInfo() {
+            try {
+                const response = await fetch('/api/network');
+                const info = await response.json();
+                
+                // Show network URL box with local IP
+                const port = window.location.port || (window.location.protocol === 'https:' ? '443' : '80');
+                const networkUrlBox = document.getElementById('network-url-box');
+                const networkUrlEl = document.getElementById('network-url');
+                
+                if (info.local_ip) {
+                    const url = `http://${info.local_ip}:${port}`;
+                    networkUrlBox.style.display = 'block';
+                    networkUrlEl.textContent = url;
+                    networkUrlEl.dataset.url = url;
+                } else {
+                    const host = window.location.host;
+                    if (!host.includes('localhost') && !host.includes('127.0.0.1')) {
+                        const url = `${window.location.protocol}//${host}`;
+                        networkUrlBox.style.display = 'block';
+                        networkUrlEl.textContent = url;
+                        networkUrlEl.dataset.url = url;
+                    }
+                }
+                
+                // Update network info display (before running test)
+                updateNetworkInfo(info);
+                
+            } catch (e) {
+                console.error('Error loading network info:', e);
+            }
+        }
+        
+        // Copy network URL to clipboard
+        function copyNetworkUrl() {
             const networkUrlEl = document.getElementById('network-url');
-            if (host.includes('localhost') || host.includes('127.0.0.1')) {
-                networkUrlEl.innerHTML = `🌐 Access from other devices: Check terminal for Network URL`;
-            } else {
-                networkUrlEl.innerHTML = `🌐 Network: <a href="${url}" target="_blank">${url}</a>`;
+            const url = networkUrlEl.dataset.url || networkUrlEl.textContent;
+            
+            if (url && !url.includes('Check terminal')) {
+                navigator.clipboard.writeText(url).then(() => {
+                    networkUrlEl.classList.add('copied');
+                    const originalText = networkUrlEl.textContent;
+                    networkUrlEl.textContent = '✅ Copied!';
+                    setTimeout(() => {
+                        networkUrlEl.textContent = originalText;
+                        networkUrlEl.classList.remove('copied');
+                    }, 1500);
+                });
             }
         }
         
@@ -1868,10 +2117,11 @@ HTML_TEMPLATE = """
             statusBadge.textContent = 'Running';
             statusBadge.className = 'status-badge running';
             
-            // Show control buttons
+            // Show control buttons, hide run button
             document.getElementById('control-buttons').style.display = 'flex';
             document.getElementById('pause-btn').textContent = '⏸️';
             document.getElementById('pause-btn').title = 'Pause';
+            runBtn.style.display = 'none';
             
             document.getElementById('empty-state').style.display = 'none';
             document.getElementById('test-progress').style.display = 'block';
@@ -1978,24 +2228,48 @@ HTML_TEMPLATE = """
             const container = document.getElementById('network-info');
             const grid = document.getElementById('network-grid');
             
+            // Cache network info for browser location updates
+            cachedNetworkInfo = info;
+            
             container.style.display = 'block';
             
-            // Save existing map before updating
-            const existingMap = document.getElementById('map-container');
-            let savedMapHtml = null;
-            if (existingMap) {
-                savedMapHtml = existingMap.innerHTML;
+            // Merge browser location if available (more precise)
+            const location = Object.assign({}, info.location || {});
+            if (browserLocation) {
+                location.lat = browserLocation.lat;
+                location.lon = browserLocation.lon;
+                location.accuracy = browserLocation.accuracy;
+                location.is_precise = true;
+                location.method = 'GPS (Browser)';
+                if (browserLocation.city) location.city = browserLocation.city;
+                if (browserLocation.region) location.region = browserLocation.region;
+                if (browserLocation.country) location.country = browserLocation.country;
             }
             
             let html = '';
             
-            // Device name section
+            // Device section with more info
+            html += '<div class="network-section">';
+            html += '<div class="section-header">💻 Device</div>';
+            html += '<div class="device-grid">';
+            
             if (info.device_name) {
-                html += '<div class="network-section">';
-                html += '<div class="section-header">💻 Device</div>';
                 html += '<div class="network-item"><label>Name</label><div class="value">' + info.device_name + '</div></div>';
-                html += '</div>';
             }
+            if (info.device_model) {
+                html += '<div class="network-item"><label>Model</label><div class="value">' + info.device_model + '</div></div>';
+            }
+            if (info.os_version) {
+                html += '<div class="network-item"><label>OS</label><div class="value">' + info.os_version + '</div></div>';
+            }
+            if (info.battery_level !== null && info.battery_level !== undefined) {
+                const batteryIcon = info.battery_charging ? '🔌' : (info.battery_level > 20 ? '🔋' : '🪫');
+                const chargingText = info.battery_charging ? ' (Charging)' : '';
+                html += '<div class="network-item"><label>Battery</label><div class="value">' + batteryIcon + ' ' + info.battery_level + '%' + chargingText + '</div></div>';
+            }
+            
+            html += '</div>'; // Close device-grid
+            html += '</div>'; // Close network-section
             
             // Signal section with status indicator
             const threshold = info.signal_threshold || -70;
@@ -2069,67 +2343,53 @@ HTML_TEMPLATE = """
             }
             html += '</div>';
             
-            // Location section with map (2-column layout)
-            if (info.location) {
-                const locMethod = info.location.is_precise ? 'GPS (Browser)' : 'IP Geolocation';
-                const locClass = info.location.is_precise ? 'precise' : 'approximate';
-                const locBadge = info.location.is_precise ? '📍 Precise' : '📍 Approximate';
+            // Location section - text only (map is persistent outside grid)
+            if (location.lat || location.city) {
+                const locMethod = location.is_precise ? 'GPS (Browser)' : 'IP Geolocation';
+                const locClass = location.is_precise ? 'precise' : 'approximate';
+                const locBadge = location.is_precise ? '📍 Precise' : '📍 Approximate';
                 
                 html += '<div class="network-section">';
                 html += '<div class="section-header">📍 Location <span class="loc-badge ' + locClass + '">' + locBadge + '</span></div>';
                 
-                // 2-column grid: info on left, map on right
-                html += '<div class="location-grid">';
-                
-                // Left column: location info
                 html += '<div class="location-info">';
-                html += '<div class="network-item"><label>City</label><div class="value">' + info.location.city + ', ' + (info.location.region || '') + ', ' + info.location.country + '</div></div>';
                 
-                if (info.location.lat && info.location.lon) {
-                    const accuracy = info.location.accuracy ? ' (±' + Math.round(info.location.accuracy) + 'm)' : '';
-                    html += '<div class="network-item"><label>Coordinates' + accuracy + '</label><div class="value">' + info.location.lat.toFixed(5) + ', ' + info.location.lon.toFixed(5) + '</div></div>';
+                if (location.lat && location.lon) {
+                    const accuracy = location.accuracy ? ' (±' + Math.round(location.accuracy) + 'm)' : '';
+                    html += '<div class="network-item"><label>Coordinates' + accuracy + '</label><div class="value">' + location.lat.toFixed(5) + ', ' + location.lon.toFixed(5) + '</div></div>';
                 }
                 
-                html += '<div class="network-item"><label>ISP</label><div class="value">' + (info.location.isp || 'N/A') + '</div></div>';
-                html += '<div class="network-item"><label>Public IP</label><div class="value">' + (info.location.ip || 'N/A') + '</div></div>';
+                const cityParts = [location.city, location.region, location.country].filter(p => p);
+                html += '<div class="network-item"><label>Location</label><div class="value">' + cityParts.join(', ') + '</div></div>';
+                
+                html += '<div class="network-item"><label>ISP</label><div class="value">' + (location.isp || 'N/A') + '</div></div>';
+                html += '<div class="network-item"><label>Public IP</label><div class="value">' + (location.ip || 'N/A') + '</div></div>';
                 html += '<div class="network-item"><label>Method</label><div class="value">' + locMethod + '</div></div>';
                 html += '</div>';
                 
-                // Right column: map
-                html += '<div class="location-map">';
-                if (info.location.lat && info.location.lon) {
-                    const lat = info.location.lat;
-                    const lon = info.location.lon;
-                    const coordsKey = lat.toFixed(5) + ',' + lon.toFixed(5);
-                    
-                    // Only update map if coordinates changed (prevent flickering)
-                    if (lastMapCoords !== coordsKey) {
-                        lastMapCoords = coordsKey;
-                        const mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=' + (lon-0.01) + '%2C' + (lat-0.01) + '%2C' + (lon+0.01) + '%2C' + (lat+0.01) + '&layer=mapnik&marker=' + lat + '%2C' + lon;
-                        html += '<div class="map-container" id="map-container">';
-                        html += '<iframe src="' + mapUrl + '" loading="lazy"></iframe>';
-                        html += '</div>';
-                    } else if (savedMapHtml) {
-                        // Restore the saved map HTML
-                        html += '<div class="map-container" id="map-container">' + savedMapHtml + '</div>';
-                    } else {
-                        // Fallback: create new map
-                        const mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=' + (lon-0.01) + '%2C' + (lat-0.01) + '%2C' + (lon+0.01) + '%2C' + (lat+0.01) + '&layer=mapnik&marker=' + lat + '%2C' + lon;
-                        html += '<div class="map-container" id="map-container">';
-                        html += '<iframe src="' + mapUrl + '" loading="lazy"></iframe>';
-                        html += '</div>';
-                    }
-                } else {
-                    html += '<div class="map-container"><div class="map-placeholder">📍 Coordinates not available</div></div>';
-                }
                 html += '</div>';
-                
-                html += '</div>';  // Close location-grid
-                html += '</div>';  // Close network-section
             }
             
-            // Update the grid with all HTML
+            // Update the grid with all HTML (no map - map is persistent)
             grid.innerHTML = html || '<div class="network-item"><label>Status</label><div class="value">Detecting...</div></div>';
+            
+            // Update persistent map (only change src if coords changed)
+            if (location.lat && location.lon) {
+                const lat = location.lat;
+                const lon = location.lon;
+                const coordsKey = lat.toFixed(5) + ',' + lon.toFixed(5);
+                
+                const persistentMap = document.getElementById('persistent-map');
+                const mapIframe = document.getElementById('map-iframe');
+                persistentMap.style.display = 'block';
+                
+                if (lastMapCoords !== coordsKey) {
+                    lastMapCoords = coordsKey;
+                    const zoom = 0.008;
+                    const mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=' + (lon-zoom) + '%2C' + (lat-zoom) + '%2C' + (lon+zoom) + '%2C' + (lat+zoom) + '&layer=mapnik&marker=' + lat + '%2C' + lon;
+                    mapIframe.src = mapUrl;
+                }
+            }
         }
         
         // Update results display
@@ -2251,6 +2511,7 @@ HTML_TEMPLATE = """
             const runBtn = document.getElementById('run-test-btn');
             runBtn.innerHTML = '<span class="btn-text">▶ Run Test</span>';
             runBtn.disabled = !isReady;
+            runBtn.style.display = '';
             
             // Hide control buttons
             document.getElementById('control-buttons').style.display = 'none';
@@ -2315,6 +2576,19 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             prereqs = check_prerequisites()
             self.send_json(prereqs)
             
+        elif self.path == '/api/network':
+            import socket
+            network_info = detect_network_info()
+            # Add local IP for network access
+            try:
+                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                s.connect(("8.8.8.8", 80))
+                network_info['local_ip'] = s.getsockname()[0]
+                s.close()
+            except:
+                network_info['local_ip'] = None
+            self.send_json(network_info)
+            
         elif self.path == '/api/logs':
             logs = []
             while not log_queue.empty():
@@ -2325,7 +2599,9 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json(logs)
             
         elif self.path == '/api/test/status':
-            self.send_json(test_results)
+            # Filter out non-serializable fields
+            safe_results = {k: v for k, v in test_results.items() if not k.startswith('_')}
+            self.send_json(safe_results)
             
         elif self.path == '/api/download/csv':
             self.handle_download_csv()
@@ -2589,8 +2865,10 @@ def main():
     # Ensure results directory exists
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     
-    # Start server
-    with socketserver.TCPServer(("", PORT), TTFBHandler) as httpd:
+    # Start server with SO_REUSEADDR
+    class ReusableTCPServer(socketserver.TCPServer):
+        allow_reuse_address = True
+    with ReusableTCPServer(("", PORT), TTFBHandler) as httpd:
         url = f"http://localhost:{PORT}"
         print(f"🌐 Server running at {url}")
         print()
