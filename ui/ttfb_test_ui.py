@@ -827,6 +827,19 @@ HTML_TEMPLATE = """
         .header-meta a:hover {
             text-decoration: underline;
         }
+        .header-network {
+            font-size: 0.75em;
+            color: #888;
+            margin-top: 4px;
+            font-family: 'SF Mono', Consolas, Monaco, monospace;
+        }
+        .header-network a {
+            color: #00d2ff;
+            text-decoration: none;
+        }
+        .header-network a:hover {
+            text-decoration: underline;
+        }
         .header-status {
             display: flex;
             align-items: center;
@@ -1462,6 +1475,7 @@ HTML_TEMPLATE = """
             <div>
                 <h1>🔧 NOC Tune</h1>
                 <div class="header-meta">made with ❤️ by <a href="https://github.com/basnugroho" target="_blank">@basnugroho</a> · MIT License · <a href="https://github.com/basnugroho/noctune" target="_blank">contribute</a></div>
+                <div class="header-network" id="network-url"></div>
             </div>
             <div class="header-status">
                 <span class="status-badge" id="status-badge">Checking...</span>
@@ -1635,7 +1649,21 @@ HTML_TEMPLATE = """
         document.addEventListener('DOMContentLoaded', () => {
             loadConfig();
             checkPrereqs();
+            showNetworkUrl();
         });
+        
+        // Show network access URL
+        function showNetworkUrl() {
+            const host = window.location.host;
+            const protocol = window.location.protocol;
+            const url = `${protocol}//${host}`;
+            const networkUrlEl = document.getElementById('network-url');
+            if (host.includes('localhost') || host.includes('127.0.0.1')) {
+                networkUrlEl.innerHTML = `🌐 Access from other devices: Check terminal for Network URL`;
+            } else {
+                networkUrlEl.innerHTML = `🌐 Network: <a href="${url}" target="_blank">${url}</a>`;
+            }
+        }
         
         // Toggle prerequisites collapse
         function togglePrereqs() {

@@ -267,10 +267,31 @@ ONT_DNS = 8.8.8.8
 
 ## 🔧 Troubleshooting
 
-### macOS: SSID/RSSI tidak terdeteksi
+### macOS: SSID tidak terdeteksi
+
+SSID detection requires **Location Services** permission:
+
+1. **System Settings** → **Privacy & Security** → **Location Services**
+2. Enable Location Services
+3. Scroll down and enable for **Terminal** (or the app running Python, e.g., VS Code, iTerm2)
+
+Alternatively, install pyobjc for better WiFi detection:
 ```bash
-# Install pyobjc untuk deteksi WiFi yang lebih baik
 pip install pyobjc-framework-CoreWLAN
+```
+
+### Windows: SSID tidak terdeteksi
+
+SSID detection requires **Location Services** permission:
+
+1. **Settings** → **Privacy** → **Location**
+2. Turn on "Location for this device"
+3. Turn on "Allow apps to access your location"
+4. Enable for **Desktop apps** (at the bottom)
+
+Alternatively, check via command line:
+```cmd
+netsh wlan show interfaces
 ```
 
 ### Windows: dig tidak ditemukan
