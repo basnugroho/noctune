@@ -317,57 +317,70 @@ def detect_network_info() -> dict:
         'wifi_channel': None,
         'dns_primary': None,
         'dns_servers': [],
-        'location': None
+        'location': None,
+        'signal_status': None,
+        'signal_threshold': -70
     }
     
     system = platform.system()
     
     # Detect WiFi
     if system == 'Darwin':
-        try:
-            # Try system_profiler
-            proc = subprocess.run(['system_profiler', 'SPAirPortDataType', '-json'],
-                                capture_output=True, text=True, timeout=15)
-            if proc.returncode == 0:
-                data = json.loads(proc.stdout)
-                airport_data = data.get('SPAirPortDataType', [])
-                for item in airport_data:
-                    interfaces = item.get('spairport_airport_interfaces', [])
-                    for iface in interfaces:
-                        current_network = iface.get('spairport_current_network_information', {})
-                        if current_network:
-                            info['wifi_ssid'] = current_network.get('_name')
-                            channel_str = current_network.get('spairport_current_network_information_channel', '')
-                            if channel_str:
-                                ch_match = re.search(r'(\d+)', str(channel_str))
-                                if ch_match:
-                                    info['wifi_channel'] = int(ch_match.group(1))
-                                    info['wifi_band'] = '5GHz' if info['wifi_channel'] >= 36 else '2.4GHz'
-        except:
-            pass
-        
-        # Fallback to networksetup for SSID
-        if not info['wifi_ssid']:
-            try:
-                proc = subprocess.run(['networksetup', '-getairportnetwork', 'en0'],
-                                    capture_output=True, text=True, timeout=5)
-                match = re.search(r'Current Wi-Fi Network: (.+)', proc.stdout)
-                if match:
-                    info['wifi_ssid'] = match.group(1).strip()
-            except:
-                pass
-        
-        # Try CoreWLAN for RSSI
+        # Method 1: Try CoreWLAN first (most reliable for SSID and RSSI)
         try:
             from CoreWLAN import CWWiFiClient
             client = CWWiFiClient.sharedWiFiClient()
             interface = client.interface()
             if interface:
                 info['wifi_rssi'] = interface.rssiValue()
-                if not info['wifi_ssid']:
-                    info['wifi_ssid'] = interface.ssid()
-        except:
+                info['wifi_ssid'] = interface.ssid()
+                channel = interface.wlanChannel()
+                if channel:
+                    info['wifi_channel'] = channel.channelNumber()
+                    info['wifi_band'] = '5GHz' if info['wifi_channel'] >= 36 else '2.4GHz'
+        except ImportError:
+            pass  # CoreWLAN not installed
+        except Exception:
             pass
+        
+        # Method 2: Try networksetup for SSID (works without extra packages)
+        if not info['wifi_ssid']:
+            try:
+                # Try en0 first (usually WiFi)
+                for iface in ['en0', 'en1']:
+                    proc = subprocess.run(['networksetup', '-getairportnetwork', iface],
+                                        capture_output=True, text=True, timeout=5)
+                    match = re.search(r'Current Wi-Fi Network: (.+)', proc.stdout)
+                    if match:
+                        info['wifi_ssid'] = match.group(1).strip()
+                        break
+            except:
+                pass
+        
+        # Method 3: Try system_profiler for channel/band info
+        if not info['wifi_channel']:
+            try:
+                proc = subprocess.run(['system_profiler', 'SPAirPortDataType', '-json'],
+                                    capture_output=True, text=True, timeout=15)
+                if proc.returncode == 0:
+                    data = json.loads(proc.stdout)
+                    airport_data = data.get('SPAirPortDataType', [])
+                    for item in airport_data:
+                        interfaces = item.get('spairport_airport_interfaces', [])
+                        for iface in interfaces:
+                            current_network = iface.get('spairport_current_network_information', {})
+                            if current_network:
+                                if not info['wifi_ssid']:
+                                    info['wifi_ssid'] = current_network.get('_name')
+                                channel_str = current_network.get('spairport_current_network_information_channel', '')
+                                if channel_str:
+                                    ch_match = re.search(r'(\d+)', str(channel_str))
+                                    if ch_match:
+                                        info['wifi_channel'] = int(ch_match.group(1))
+                                        info['wifi_band'] = '5GHz' if info['wifi_channel'] >= 36 else '2.4GHz'
+                                break
+            except:
+                pass
         
         # Get DNS
         try:
@@ -480,22 +493,40 @@ def run_tests(config: dict):
         add_log('Detecting network information...', 'info')
         test_results['network_info'] = detect_network_info()
         
+        # Add signal threshold from config to network_info
+        test_results['network_info']['signal_threshold'] = config.get('SIGNAL_THRESHOLD_DBM', -70)
+        
         wifi_info = test_results['network_info']
+        threshold = wifi_info.get('signal_threshold', -70)
+        rssi = wifi_info.get('wifi_rssi')
+        
+        # Log signal status with threshold
+        if rssi is not None:
+            signal_status = '✅ Good' if rssi >= threshold else '⚠️ Weak'
+            add_log(f"Signal: {signal_status} (RSSI: {rssi} dBm, threshold: {threshold} dBm)", 'info' if rssi >= threshold else 'warning')
+        else:
+            add_log("Signal: ❓ Unknown (RSSI not detected)", 'warning')
+        
         if wifi_info.get('wifi_ssid'):
-            add_log(f"WiFi SSID: {wifi_info['wifi_ssid']}", 'info')
+            add_log(f"SSID: {wifi_info['wifi_ssid']}", 'info')
+        else:
+            add_log("SSID: Not detected", 'warning')
+            
         if wifi_info.get('wifi_band'):
-            add_log(f"WiFi Band: {wifi_info['wifi_band']} (Channel {wifi_info.get('wifi_channel', 'N/A')})", 'info')
-        if wifi_info.get('wifi_rssi'):
-            add_log(f"WiFi Signal: {wifi_info['wifi_rssi']} dBm", 'info')
+            channel_str = f" (Channel {wifi_info.get('wifi_channel')})" if wifi_info.get('wifi_channel') else ""
+            add_log(f"Band: {wifi_info['wifi_band']}{channel_str}", 'info')
         if wifi_info.get('dns_primary'):
-            add_log(f"DNS Server: {wifi_info['dns_primary']}", 'info')
+            add_log(f"DNS: {wifi_info['dns_primary']}", 'info')
         if wifi_info.get('location'):
             loc = wifi_info['location']
-            add_log(f"Location: {loc.get('city')}, {loc.get('country')} ({loc.get('isp')})", 'info')
+            method = 'GPS' if loc.get('is_precise') else 'IP'
+            add_log(f"Location: {loc.get('city')}, {loc.get('country')} [{method}]", 'info')
+            if loc.get('isp'):
+                add_log(f"ISP: {loc.get('isp')}", 'info')
         
         # Create session directory
-        signal_cat = 'good_signal' if (wifi_info.get('wifi_rssi') or 0) >= config.get('SIGNAL_THRESHOLD_DBM', -70) else 'bad_signal'
-        if wifi_info.get('wifi_rssi') is None:
+        signal_cat = 'good_signal' if (rssi or 0) >= threshold else 'bad_signal'
+        if rssi is None:
             signal_cat = 'unknown_signal'
         
         band_short = (wifi_info.get('wifi_band') or 'Unknown').replace('.', '_').replace('GHz', 'G')
@@ -602,11 +633,18 @@ def run_tests(config: dict):
         valid_results = [r for r in all_results if r.get('ttfb_ms')]
         if valid_results:
             ttfbs = [r['ttfb_ms'] for r in valid_results]
+            sorted_ttfbs = sorted(ttfbs)
+            mean_ttfb = sum(ttfbs) / len(ttfbs)
+            median_ttfb = sorted_ttfbs[len(sorted_ttfbs) // 2]
+            std_ttfb = (sum((x - mean_ttfb) ** 2 for x in ttfbs) / len(ttfbs)) ** 0.5
+            
             test_results['summary'] = {
                 'total_tests': len(all_results),
                 'successful_tests': len(valid_results),
                 'failed_tests': len(all_results) - len(valid_results),
-                'mean_ttfb': sum(ttfbs) / len(ttfbs),
+                'mean_ttfb': mean_ttfb,
+                'median_ttfb': median_ttfb,
+                'std_ttfb': std_ttfb,
                 'min_ttfb': min(ttfbs),
                 'max_ttfb': max(ttfbs),
                 'good_count': len([r for r in valid_results if r['status'] == 'good']),
@@ -616,8 +654,8 @@ def run_tests(config: dict):
             
             summary = test_results['summary']
             add_log(f"Total tests: {summary['total_tests']} ({summary['successful_tests']} successful)", 'info')
-            add_log(f"Mean TTFB: {summary['mean_ttfb']:.0f}ms", 'info')
-            add_log(f"Range: {summary['min_ttfb']:.0f}ms - {summary['max_ttfb']:.0f}ms", 'info')
+            add_log(f"Mean TTFB: {summary['mean_ttfb']:.0f}ms, Median: {summary['median_ttfb']:.0f}ms", 'info')
+            add_log(f"Range: {summary['min_ttfb']:.0f}ms - {summary['max_ttfb']:.0f}ms (Std: {summary['std_ttfb']:.0f}ms)", 'info')
             add_log(f"Status: {summary['good_count']} good, {summary['warning_count']} warning, {summary['poor_count']} poor", 'info')
         
         # Save results
@@ -920,6 +958,56 @@ HTML_TEMPLATE = """
             padding: 16px;
             margin-bottom: 20px;
         }
+        .network-section {
+            margin-bottom: 16px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .network-section:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+        .section-header {
+            font-size: 0.9em;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 10px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .signal-badge {
+            display: inline-block;
+            font-size: 0.8em;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+        .signal-badge.good {
+            background: rgba(76, 175, 80, 0.3);
+            color: #81c784;
+        }
+        .signal-badge.warning {
+            background: rgba(255, 152, 0, 0.3);
+            color: #ffb74d;
+        }
+        .signal-badge.unknown {
+            background: rgba(158, 158, 158, 0.3);
+            color: #bdbdbd;
+        }
+        .threshold-info {
+            font-size: 0.8em;
+            color: #666;
+            margin-left: 4px;
+        }
+        .value.muted {
+            color: #666;
+            font-style: italic;
+        }
+        .value.small {
+            font-size: 0.85em;
+        }
         .network-card h3 {
             font-size: 0.9em;
             color: #888;
@@ -965,13 +1053,13 @@ HTML_TEMPLATE = """
         /* Results Summary */
         .summary-cards {
             display: grid;
-            grid-template-columns: repeat(3, 1fr);
-            gap: 12px;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 10px;
             margin-bottom: 20px;
         }
         .summary-card {
             background: rgba(255,255,255,0.03);
-            padding: 16px;
+            padding: 14px;
             border-radius: 10px;
             text-align: center;
         }
@@ -1245,6 +1333,13 @@ HTML_TEMPLATE = """
                         </tbody>
                     </table>
                 </div>
+                
+                <div id="download-section" style="display: none; margin-top: 16px;">
+                    <div class="btn-group">
+                        <button class="btn btn-success" onclick="downloadCSV()" id="download-csv-btn">📥 Download CSV</button>
+                        <button class="btn btn-primary" onclick="downloadReport()" id="download-report-btn">📄 Download Report</button>
+                    </div>
+                </div>
             </div>
             
             <div id="empty-state" class="empty-state">
@@ -1504,27 +1599,71 @@ HTML_TEMPLATE = """
             
             let html = '';
             
+            // Signal section with status indicator
+            const threshold = info.signal_threshold || -70;
+            const rssi = info.wifi_rssi;
+            let signalStatus = '❓ Unknown';
+            let signalClass = 'unknown';
+            if (rssi !== null && rssi !== undefined) {
+                if (rssi >= threshold) {
+                    signalStatus = '✅ Good';
+                    signalClass = 'good';
+                } else {
+                    signalStatus = '⚠️ Weak';
+                    signalClass = 'warning';
+                }
+            }
+            
+            html += `<div class="network-section">`;
+            html += `<div class="section-header">📶 WiFi Signal <span class="signal-badge ${signalClass}">${signalStatus}</span></div>`;
+            
             if (info.wifi_ssid) {
                 html += `<div class="network-item"><label>SSID</label><div class="value">${info.wifi_ssid}</div></div>`;
+            } else {
+                html += `<div class="network-item"><label>SSID</label><div class="value muted">Not detected</div></div>`;
             }
+            
+            if (rssi !== null && rssi !== undefined) {
+                html += `<div class="network-item"><label>RSSI</label><div class="value">${rssi} dBm <span class="threshold-info">(threshold: ${threshold} dBm)</span></div></div>`;
+            }
+            
             if (info.wifi_band) {
-                html += `<div class="network-item"><label>Band</label><div class="value">${info.wifi_band}</div></div>`;
+                const channelInfo = info.wifi_channel ? ` (Ch ${info.wifi_channel})` : '';
+                html += `<div class="network-item"><label>Band</label><div class="value">${info.wifi_band}${channelInfo}</div></div>`;
             }
-            if (info.wifi_rssi) {
-                html += `<div class="network-item"><label>Signal</label><div class="value">${info.wifi_rssi} dBm</div></div>`;
-            }
+            
+            html += `</div>`;
+            
+            // DNS section
+            html += `<div class="network-section">`;
+            html += `<div class="section-header">🌐 DNS</div>`;
             if (info.dns_primary) {
-                html += `<div class="network-item"><label>DNS</label><div class="value">${info.dns_primary}</div></div>`;
+                html += `<div class="network-item"><label>Primary</label><div class="value">${info.dns_primary}</div></div>`;
             }
+            if (info.dns_servers && info.dns_servers.length > 1) {
+                html += `<div class="network-item"><label>All Servers</label><div class="value small">${info.dns_servers.join(', ')}</div></div>`;
+            }
+            html += `</div>`;
+            
+            // Location section
             if (info.location) {
-                const locMethod = info.location.is_precise ? '📍 GPS' : '📍 IP';
+                const locMethod = info.location.is_precise ? 'GPS (Browser)' : 'IP Geolocation';
                 const locClass = info.location.is_precise ? 'precise' : 'approximate';
-                html += `<div class="network-item"><label>Location <span class="loc-badge ${locClass}">${locMethod}</span></label><div class="value">${info.location.city}, ${info.location.country}</div></div>`;
+                const locBadge = info.location.is_precise ? '📍 Precise' : '📍 Approximate';
+                
+                html += `<div class="network-section">`;
+                html += `<div class="section-header">📍 Location <span class="loc-badge ${locClass}">${locBadge}</span></div>`;
+                html += `<div class="network-item"><label>City</label><div class="value">${info.location.city}, ${info.location.region || ''}, ${info.location.country}</div></div>`;
+                
                 if (info.location.lat && info.location.lon) {
                     const accuracy = info.location.accuracy ? ` (±${Math.round(info.location.accuracy)}m)` : '';
-                    html += `<div class="network-item"><label>Coordinates${accuracy}</label><div class="value">${info.location.lat.toFixed(4)}, ${info.location.lon.toFixed(4)}</div></div>`;
+                    html += `<div class="network-item"><label>Coordinates${accuracy}</label><div class="value">${info.location.lat.toFixed(5)}, ${info.location.lon.toFixed(5)}</div></div>`;
                 }
-                html += `<div class="network-item"><label>ISP</label><div class="value">${info.location.isp}</div></div>`;
+                
+                html += `<div class="network-item"><label>ISP</label><div class="value">${info.location.isp || 'N/A'}</div></div>`;
+                html += `<div class="network-item"><label>Public IP</label><div class="value">${info.location.ip || 'N/A'}</div></div>`;
+                html += `<div class="network-item"><label>Method</label><div class="value">${locMethod}</div></div>`;
+                html += `</div>`;
             }
             
             grid.innerHTML = html || '<div class="network-item"><label>Status</label><div class="value">Detecting...</div></div>';
@@ -1535,11 +1674,13 @@ HTML_TEMPLATE = """
             const resultsSection = document.getElementById('results-section');
             const summaryCards = document.getElementById('summary-cards');
             const tbody = document.getElementById('results-tbody');
+            const downloadSection = document.getElementById('download-section');
             
             resultsSection.style.display = 'block';
             
             // Update summary
             if (status.summary && status.summary.mean_ttfb) {
+                const poorCount = status.summary.poor_count || 0;
                 summaryCards.innerHTML = `
                     <div class="summary-card">
                         <div class="value">${status.summary.mean_ttfb.toFixed(0)}</div>
@@ -1552,6 +1693,10 @@ HTML_TEMPLATE = """
                     <div class="summary-card warning">
                         <div class="value">${status.summary.warning_count || 0}</div>
                         <div class="label">Warning</div>
+                    </div>
+                    <div class="summary-card poor">
+                        <div class="value">${poorCount}</div>
+                        <div class="label">Poor</div>
                     </div>
                 `;
             }
@@ -1570,6 +1715,61 @@ HTML_TEMPLATE = """
                 `;
             }
             tbody.innerHTML = html;
+            
+            // Show download buttons when completed
+            if (status.status === 'completed') {
+                downloadSection.style.display = 'block';
+            } else {
+                downloadSection.style.display = 'none';
+            }
+        }
+        
+        // Download CSV
+        async function downloadCSV() {
+            try {
+                const response = await fetch('/api/download/csv');
+                if (!response.ok) throw new Error('Download failed');
+                
+                const blob = await response.blob();
+                const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'ttfb_results.csv';
+                
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                
+                addLog('CSV downloaded: ' + filename, 'success');
+            } catch (e) {
+                addLog('Error downloading CSV: ' + e.message, 'error');
+            }
+        }
+        
+        // Download Report
+        async function downloadReport() {
+            try {
+                const response = await fetch('/api/download/report');
+                if (!response.ok) throw new Error('Download failed');
+                
+                const blob = await response.blob();
+                const filename = response.headers.get('Content-Disposition')?.split('filename=')[1]?.replace(/"/g, '') || 'ttfb_report.txt';
+                
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                window.URL.revokeObjectURL(url);
+                
+                addLog('Report downloaded: ' + filename, 'success');
+            } catch (e) {
+                addLog('Error downloading report: ' + e.message, 'error');
+            }
         }
         
         // Reset test UI
@@ -1651,9 +1851,209 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
         elif self.path == '/api/test/status':
             self.send_json(test_results)
             
+        elif self.path == '/api/download/csv':
+            self.handle_download_csv()
+            
+        elif self.path == '/api/download/report':
+            self.handle_download_report()
+            
         else:
             self.send_response(404)
             self.end_headers()
+    
+    def handle_download_csv(self):
+        """Generate and send CSV file for download."""
+        global test_results
+        
+        if not test_results.get('ttfb_results'):
+            self.send_json({'error': 'No results available'})
+            return
+        
+        try:
+            import csv
+            import io
+            
+            # Generate filename
+            session_id = test_results.get('session_id', datetime.now().strftime('%Y%m%d_%H%M%S'))
+            network_info = test_results.get('network_info', {})
+            band = (network_info.get('wifi_band') or 'Unknown').replace('.', '_').replace('GHz', 'G')
+            dns = (network_info.get('dns_primary') or 'UnknownDNS').replace('.', '-')
+            
+            filename = f"ttfb_results_{band}_{dns}_{session_id}.csv"
+            
+            # Create CSV content
+            output = io.StringIO()
+            results = test_results['ttfb_results']
+            
+            if results:
+                fieldnames = ['timestamp', 'target_name', 'sample_num', 'url', 'ttfb_ms', 'lookup_ms', 
+                             'connect_ms', 'total_ms', 'http_code', 'status', 'error',
+                             'wifi_band', 'wifi_rssi', 'dns_primary', 'location_city', 'location_country', 'isp']
+                writer = csv.DictWriter(output, fieldnames=[f for f in fieldnames if any(f in r for r in results)], extrasaction='ignore')
+                writer.writeheader()
+                
+                for result in results:
+                    # Add network info to each row
+                    result_row = dict(result)
+                    result_row['wifi_band'] = network_info.get('wifi_band')
+                    result_row['wifi_rssi'] = network_info.get('wifi_rssi')
+                    result_row['dns_primary'] = network_info.get('dns_primary')
+                    if network_info.get('location'):
+                        result_row['location_city'] = network_info['location'].get('city')
+                        result_row['location_country'] = network_info['location'].get('country')
+                        result_row['isp'] = network_info['location'].get('isp')
+                    writer.writerow(result_row)
+            
+            csv_content = output.getvalue().encode('utf-8')
+            
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/csv')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Content-Length', len(csv_content))
+            self.end_headers()
+            self.wfile.write(csv_content)
+            
+        except Exception as e:
+            self.send_json({'error': str(e)})
+    
+    def handle_download_report(self):
+        """Generate and send text report for download."""
+        global test_results
+        
+        if not test_results.get('ttfb_results'):
+            self.send_json({'error': 'No results available'})
+            return
+        
+        try:
+            # Generate filename
+            session_id = test_results.get('session_id', datetime.now().strftime('%Y%m%d_%H%M%S'))
+            network_info = test_results.get('network_info', {})
+            band = (network_info.get('wifi_band') or 'Unknown').replace('.', '_').replace('GHz', 'G')
+            dns = (network_info.get('dns_primary') or 'UnknownDNS').replace('.', '-')
+            
+            filename = f"ttfb_report_{band}_{dns}_{session_id}.txt"
+            
+            # Generate report content
+            lines = []
+            lines.append("=" * 70)
+            lines.append("NOC Tune - TTFB Test Report")
+            lines.append("=" * 70)
+            lines.append("")
+            lines.append(f"Session ID: {session_id}")
+            lines.append(f"Start Time: {test_results.get('start_time', 'N/A')}")
+            lines.append(f"End Time: {test_results.get('end_time', 'N/A')}")
+            lines.append("")
+            
+            # Network conditions
+            lines.append("-" * 50)
+            lines.append("🔍 DETECTED CONDITIONS")
+            lines.append("-" * 50)
+            
+            threshold = network_info.get('signal_threshold', -70)
+            rssi = network_info.get('wifi_rssi')
+            if rssi is not None:
+                signal_status = "✅ Good" if rssi >= threshold else "⚠️ Weak"
+                lines.append(f"📶 Signal: {signal_status}")
+                lines.append(f"   • RSSI: {rssi} dBm")
+                lines.append(f"   • Threshold: {threshold} dBm")
+            else:
+                lines.append("📶 Signal: ❓ Unknown")
+            
+            lines.append(f"📻 Band: {network_info.get('wifi_band', 'N/A')}")
+            if network_info.get('wifi_channel'):
+                lines.append(f"   • Channel: {network_info['wifi_channel']}")
+            lines.append(f"🌐 DNS: {network_info.get('dns_primary', 'N/A')}")
+            lines.append(f"📡 SSID: {network_info.get('wifi_ssid', 'N/A')}")
+            lines.append("")
+            
+            # Location
+            loc = network_info.get('location', {})
+            if loc:
+                lines.append("-" * 50)
+                lines.append("📍 LOCATION")
+                lines.append("-" * 50)
+                lines.append(f"🌍 {loc.get('city', 'N/A')}, {loc.get('region', '')}, {loc.get('country', 'N/A')}")
+                if loc.get('lat') and loc.get('lon'):
+                    accuracy = f" (±{loc['accuracy']:.0f}m)" if loc.get('accuracy') else ""
+                    lines.append(f"📍 Coordinates: {loc['lat']}, {loc['lon']}{accuracy}")
+                lines.append(f"🏢 ISP: {loc.get('isp', 'N/A')}")
+                lines.append(f"🌐 Public IP: {loc.get('ip', 'N/A')}")
+                lines.append(f"📡 Method: {loc.get('method', 'N/A')}")
+                lines.append("")
+            
+            # Results summary
+            lines.append("-" * 50)
+            lines.append("📊 TTFB RESULTS SUMMARY")
+            lines.append("-" * 50)
+            
+            summary = test_results.get('summary', {})
+            if summary:
+                mean_ttfb = summary.get('mean_ttfb', 0)
+                config = test_results.get('config', {})
+                ttfb_good = config.get('TTFB_GOOD_MS', 200)
+                ttfb_warning = config.get('TTFB_WARNING_MS', 500)
+                
+                if mean_ttfb < ttfb_good:
+                    status_str = "✅ GOOD"
+                elif mean_ttfb < ttfb_warning:
+                    status_str = "⚠️ WARNING"
+                else:
+                    status_str = "❌ POOR"
+                
+                lines.append(f"🎯 Mean TTFB: {mean_ttfb:.2f} ms {status_str}")
+                lines.append(f"📊 Median: {summary.get('median_ttfb', 0):.2f} ms")
+                lines.append(f"📉 Min: {summary.get('min_ttfb', 0):.2f} ms")
+                lines.append(f"📈 Max: {summary.get('max_ttfb', 0):.2f} ms")
+                lines.append(f"📏 Std Dev: {summary.get('std_ttfb', 0):.2f} ms")
+                lines.append("")
+                lines.append(f"Status Breakdown:")
+                lines.append(f"   ✅ Good: {summary.get('good_count', 0)}")
+                lines.append(f"   ⚠️ Warning: {summary.get('warning_count', 0)}")
+                lines.append(f"   ❌ Poor: {summary.get('poor_count', 0)}")
+                lines.append(f"   Total: {summary.get('total_tests', 0)}")
+            lines.append("")
+            
+            # Per-target details
+            results = test_results.get('ttfb_results', [])
+            if results:
+                lines.append("-" * 50)
+                lines.append("📋 DETAILED RESULTS")
+                lines.append("-" * 50)
+                
+                # Group by target
+                targets = {}
+                for r in results:
+                    target = r.get('target_name', 'Unknown')
+                    if target not in targets:
+                        targets[target] = []
+                    targets[target].append(r)
+                
+                for target, target_results in targets.items():
+                    lines.append(f"\n🎯 {target}:")
+                    valid_ttfbs = [r['ttfb_ms'] for r in target_results if r.get('ttfb_ms')]
+                    if valid_ttfbs:
+                        lines.append(f"   Mean: {sum(valid_ttfbs)/len(valid_ttfbs):.0f}ms, Min: {min(valid_ttfbs):.0f}ms, Max: {max(valid_ttfbs):.0f}ms")
+                    for r in target_results:
+                        ttfb = f"{r['ttfb_ms']:.0f}ms" if r.get('ttfb_ms') else "ERROR"
+                        status = r.get('status', 'unknown')
+                        lines.append(f"   Sample {r.get('sample_num', '?')}: {ttfb} [{status}]")
+            
+            lines.append("")
+            lines.append("=" * 70)
+            lines.append("Generated by NOC Tune - https://github.com/basnugroho/noctune")
+            lines.append("=" * 70)
+            
+            report_content = "\n".join(lines).encode('utf-8')
+            
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/plain; charset=utf-8')
+            self.send_header('Content-Disposition', f'attachment; filename="{filename}"')
+            self.send_header('Content-Length', len(report_content))
+            self.end_headers()
+            self.wfile.write(report_content)
+            
+        except Exception as e:
+            self.send_json({'error': str(e)})
     
     def do_POST(self):
         content_length = int(self.headers.get('Content-Length', 0))
