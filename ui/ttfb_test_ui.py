@@ -313,6 +313,7 @@ def measure_ttfb(url: str) -> dict:
 def detect_network_info() -> dict:
     """Detect current network information."""
     info = {
+        'device_name': None,
         'wifi_ssid': None,
         'wifi_rssi': None,
         'wifi_band': None,
@@ -325,6 +326,26 @@ def detect_network_info() -> dict:
     }
     
     system = platform.system()
+    
+    # Get device name
+    if system == 'Darwin':
+        try:
+            proc = subprocess.run(['scutil', '--get', 'ComputerName'],
+                                capture_output=True, text=True, timeout=5)
+            if proc.returncode == 0:
+                info['device_name'] = proc.stdout.strip()
+        except:
+            pass
+    elif system == 'Windows':
+        try:
+            info['device_name'] = platform.node() or os.environ.get('COMPUTERNAME')
+        except:
+            pass
+    else:
+        try:
+            info['device_name'] = platform.node()
+        except:
+            pass
     
     # Detect WiFi
     if system == 'Darwin':
@@ -506,15 +527,18 @@ def run_tests(config: dict):
     test_running = True
     test_stopped = False
     test_paused = False
+    test_start_time = datetime.now()
     test_results = {
         'session_id': datetime.now().strftime('%Y%m%d_%H%M%S'),
-        'start_time': datetime.now().isoformat(),
+        'start_time': test_start_time.isoformat(),
         'config': config,
         'network_info': {},
         'ping_result': {},
         'ttfb_results': [],
         'summary': {},
-        'status': 'running'
+        'status': 'running',
+        'elapsed_seconds': 0,
+        '_start_time_obj': test_start_time  # For internal calculation
     }
     
     try:
@@ -640,6 +664,12 @@ def run_tests(config: dict):
                 result['sample_num'] = sample_num
                 result['target_name'] = domain
                 result['timestamp'] = datetime.now().isoformat()
+                result['time_short'] = datetime.now().strftime('%H:%M:%S')
+                
+                # Add network info to result for expanded table
+                result['rssi'] = test_results['network_info'].get('wifi_rssi')
+                result['band'] = test_results['network_info'].get('wifi_band')
+                result['dns'] = test_results['network_info'].get('dns_primary')
                 
                 target_results.append(result)
                 all_results.append(result)
@@ -654,6 +684,7 @@ def run_tests(config: dict):
                 
                 # Update test_results for real-time display
                 test_results['ttfb_results'] = all_results
+                test_results['elapsed_seconds'] = (datetime.now() - test_results['_start_time_obj']).total_seconds()
                 
                 # Delay between samples
                 if sample_num < sample_count:
@@ -1109,6 +1140,12 @@ HTML_TEMPLATE = """
         .value.small {
             font-size: 0.85em;
         }
+        .hint {
+            font-size: 0.75em;
+            color: #555;
+            display: block;
+            margin-top: 2px;
+        }
         .network-card h3 {
             font-size: 0.9em;
             color: #888;
@@ -1332,6 +1369,20 @@ HTML_TEMPLATE = """
         .clear-logs:hover { color: #999; }
         
         /* Progress */
+        .progress-details {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            font-size: 0.85em;
+            color: #aaa;
+            font-family: 'SF Mono', Consolas, Monaco, monospace;
+        }
+        .progress-details span {
+            padding: 2px 8px;
+            background: rgba(255,255,255,0.05);
+            border-radius: 4px;
+        }
         .progress-bar {
             height: 4px;
             background: rgba(255,255,255,0.1);
@@ -1343,6 +1394,25 @@ HTML_TEMPLATE = """
             height: 100%;
             background: linear-gradient(90deg, #00d2ff, #3a7bd5);
             transition: width 0.3s;
+        }
+        
+        /* Expanded Results Table */
+        .results-table-expanded {
+            font-family: 'SF Mono', Consolas, Monaco, monospace;
+            font-size: 0.75em;
+        }
+        .results-table-expanded th, .results-table-expanded td {
+            padding: 6px 8px;
+            white-space: nowrap;
+        }
+        .results-table-expanded .time-col {
+            color: #888;
+            font-size: 0.9em;
+        }
+        .results-table-expanded .target-col {
+            max-width: 120px;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         
         /* Spinner */
@@ -1488,6 +1558,11 @@ HTML_TEMPLATE = """
             
             <div id="test-progress" style="display: none;">
                 <div class="panel-title">⏳ Test Progress</div>
+                <div class="progress-details">
+                    <span id="progress-count">0 / 0</span>
+                    <span id="progress-percent">0%</span>
+                    <span id="progress-eta">ETA: --</span>
+                </div>
                 <div class="progress-bar">
                     <div class="fill" id="progress-fill" style="width: 0%"></div>
                 </div>
@@ -1501,12 +1576,16 @@ HTML_TEMPLATE = """
                 </div>
                 
                 <div style="max-height: 400px; overflow-y: auto;">
-                    <table class="results-table">
+                    <table class="results-table results-table-expanded">
                         <thead>
                             <tr>
+                                <th>Time</th>
                                 <th>Target</th>
                                 <th>#</th>
                                 <th>TTFB</th>
+                                <th>RSSI</th>
+                                <th>Band</th>
+                                <th>DNS</th>
                                 <th>Status</th>
                             </tr>
                         </thead>
@@ -1822,6 +1901,22 @@ HTML_TEMPLATE = """
                     const current = status.ttfb_results.length;
                     const pct = Math.round((current / total) * 100);
                     document.getElementById('progress-fill').style.width = pct + '%';
+                    document.getElementById('progress-count').textContent = current + ' / ' + total;
+                    document.getElementById('progress-percent').textContent = pct + '%';
+                    
+                    // Calculate ETA
+                    if (current > 0 && current < total) {
+                        const elapsed = status.elapsed_seconds || 0;
+                        const avgPerTest = elapsed / current;
+                        const remaining = (total - current) * avgPerTest;
+                        if (remaining < 60) {
+                            document.getElementById('progress-eta').textContent = 'ETA: ' + Math.round(remaining) + 's';
+                        } else {
+                            document.getElementById('progress-eta').textContent = 'ETA: ' + Math.round(remaining / 60) + 'm ' + Math.round(remaining % 60) + 's';
+                        }
+                    } else if (current >= total) {
+                        document.getElementById('progress-eta').textContent = 'Done!';
+                    }
                 }
                 
                 // Update network info
@@ -1857,7 +1952,22 @@ HTML_TEMPLATE = """
             
             container.style.display = 'block';
             
+            // Save existing map before updating
+            const existingMap = document.getElementById('map-container');
+            let savedMapHtml = null;
+            if (existingMap) {
+                savedMapHtml = existingMap.innerHTML;
+            }
+            
             let html = '';
+            
+            // Device name section
+            if (info.device_name) {
+                html += '<div class="network-section">';
+                html += '<div class="section-header">💻 Device</div>';
+                html += '<div class="network-item"><label>Name</label><div class="value">' + info.device_name + '</div></div>';
+                html += '</div>';
+            }
             
             // Signal section with status indicator
             const threshold = info.signal_threshold || -70;
@@ -1900,7 +2010,7 @@ HTML_TEMPLATE = """
             if (info.wifi_ssid) {
                 html += '<div class="network-item"><label>SSID</label><div class="value">' + info.wifi_ssid + '</div></div>';
             } else {
-                html += '<div class="network-item"><label>SSID</label><div class="value muted">Not detected</div></div>';
+                html += '<div class="network-item"><label>SSID</label><div class="value muted">Not detected <span class="hint">(macOS: grant Location Services permission)</span></div></div>';
             }
             
             if (rssi !== null && rssi !== undefined) {
@@ -1971,9 +2081,15 @@ HTML_TEMPLATE = """
                         html += '<div class="map-container" id="map-container">';
                         html += '<iframe src="' + mapUrl + '" loading="lazy"></iframe>';
                         html += '</div>';
+                    } else if (savedMapHtml) {
+                        // Restore the saved map HTML
+                        html += '<div class="map-container" id="map-container">' + savedMapHtml + '</div>';
                     } else {
-                        // Keep existing map
-                        html += '<div class="map-container" id="map-container-placeholder"></div>';
+                        // Fallback: create new map
+                        const mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=' + (lon-0.01) + '%2C' + (lat-0.01) + '%2C' + (lon+0.01) + '%2C' + (lat+0.01) + '&layer=mapnik&marker=' + lat + '%2C' + lon;
+                        html += '<div class="map-container" id="map-container">';
+                        html += '<iframe src="' + mapUrl + '" loading="lazy"></iframe>';
+                        html += '</div>';
                     }
                 } else {
                     html += '<div class="map-container"><div class="map-placeholder">📍 Coordinates not available</div></div>';
@@ -1984,15 +2100,8 @@ HTML_TEMPLATE = """
                 html += '</div>';  // Close network-section
             }
             
-            // Preserve existing map if we used placeholder
-            const existingMap = document.getElementById('map-container');
+            // Update the grid with all HTML
             grid.innerHTML = html || '<div class="network-item"><label>Status</label><div class="value">Detecting...</div></div>';
-            
-            // Restore map if placeholder was used
-            const placeholder = document.getElementById('map-container-placeholder');
-            if (placeholder && existingMap) {
-                placeholder.replaceWith(existingMap);
-            }
         }
         
         // Update results display
@@ -2031,11 +2140,19 @@ HTML_TEMPLATE = """
             let html = '';
             for (const result of status.ttfb_results) {
                 const ttfbDisplay = result.ttfb_ms ? `${result.ttfb_ms.toFixed(0)}ms` : 'ERR';
+                const timeDisplay = result.time_short || '-';
+                const rssiDisplay = result.rssi ? `${result.rssi}` : '-';
+                const bandDisplay = result.band || '-';
+                const dnsDisplay = result.dns ? result.dns.split('.').slice(0, 2).join('.') + '...' : '-';
                 html += `
                     <tr>
-                        <td>${result.target_name || '-'}</td>
+                        <td class="time-col">${timeDisplay}</td>
+                        <td class="target-col" title="${result.target_name || '-'}">${result.target_name || '-'}</td>
                         <td>${result.sample_num || '-'}</td>
                         <td>${ttfbDisplay}</td>
+                        <td>${rssiDisplay}</td>
+                        <td>${bandDisplay}</td>
+                        <td title="${result.dns || '-'}">${dnsDisplay}</td>
                         <td><span class="ttfb-badge ${result.status}">${result.status}</span></td>
                     </tr>
                 `;
