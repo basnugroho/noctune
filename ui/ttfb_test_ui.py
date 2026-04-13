@@ -1773,7 +1773,8 @@ HTML_TEMPLATE = """
             
             <div class="btn-group">
                 <button class="btn btn-secondary" onclick="saveConfig()">💾 Save</button>
-                <button class="btn btn-secondary" onclick="loadConfig()">🔄 Reset</button>
+                <button class="btn btn-secondary" onclick="loadConfig()">🔄 Reload</button>
+                <button class="btn btn-secondary" onclick="resetToDefaults()" title="Reset to original default values">⏮ Default</button>
             </div>
         </div>
         
@@ -2097,6 +2098,18 @@ HTML_TEMPLATE = """
             } catch (e) {
                 console.error('Error loading config:', e);
             }
+        }
+        
+        // Reset config to defaults
+        function resetToDefaults() {
+            document.getElementById('targets').value = 'https://www.instagram.com\nhttps://qt-google-cloud-cdn.bronze.systems';
+            document.getElementById('sample-count').value = 10;
+            document.getElementById('delay-seconds').value = 30;
+            document.getElementById('ping-duration').value = 60;
+            document.getElementById('ttfb-good').value = 600;
+            document.getElementById('ttfb-warning').value = 800;
+            document.getElementById('signal-threshold').value = -65;
+            addLog('Configuration reset to defaults (not saved yet)', 'info');
         }
         
         // Save config to server
