@@ -41,3 +41,7 @@ output*.png
 # Tools (compiled binaries)
 tools/get_ssid
 tools/GetSSID.app/
+
+# Generated notebook artifacts
+notebooks/precise_location.json
+notebooks/results/*
