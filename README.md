@@ -2,7 +2,9 @@
 
 **Network Operations Center Tuning & Diagnostic Tool**
 
-Tools untuk mengukur dan menganalisis kualitas jaringan secara komprehensif, dikembangkan berdasarkan metodologi troubleshooting TTFB.
+Tools untuk mengukur dan menganalisis kualitas jaringan secara komprehensif.
+
+NOC Tune adalah aplikasi browser-based untuk mengukur TTFB secara otomatis, melihat konteks jaringan secara detail, dan menyimpan hasil dalam bentuk yang mudah dibaca. Tool ini cocok untuk validasi kualitas akses, troubleshooting, dan pengumpulan data teknis yang lebih rapi.
 
 Made with ❤️ by [@basnugroho](https://github.com/basnugroho) · MIT License · [Contribute](https://github.com/basnugroho/noctune)
 
@@ -21,6 +23,25 @@ Made with ❤️ by [@basnugroho](https://github.com/basnugroho) · MIT License 
 
 ### BCQ Analysis
 ![BCQ Analysis](images/bcq.png)
+
+---
+
+## ℹ️ About
+
+NOC Tune membantu Anda mengukur kualitas akses ke website atau endpoint tertentu dengan cara yang sederhana namun tetap detail.
+
+- Mengukur TTFB secara otomatis ke satu atau banyak target.
+- Mencatat konteks jaringan saat pengukuran berlangsung, seperti DNS, WiFi, perangkat, lokasi, ISP, dan IP publik.
+- Menampilkan hasil secara real-time dalam tabel, summary, dan chart.
+- Menyediakan export CSV dan report agar hasil mudah dibagikan atau dianalisis ulang.
+- Mendukung contribute ke `qosmic.solusee.id` secara manual atau otomatis per row jika diaktifkan.
+
+## ✅ Manfaat
+
+- Lebih cepat melihat apakah masalah ada di akses target, DNS, WiFi, atau kondisi jaringan umum.
+- Lebih mudah membandingkan hasil antar lokasi, antar waktu, atau antar band WiFi.
+- Lebih rapi untuk membuat bukti teknis saat troubleshooting atau pelaporan.
+- Lebih praktis karena satu UI sudah mencakup pengukuran, visualisasi, export, dan kontribusi data.
 
 ---
 
@@ -70,7 +91,9 @@ Browser akan terbuka otomatis dengan tampilan:
 - 📡 Network Info (signal, band, DNS, lokasi + peta)
 - ⚙️ Configuration panel
 - 📊 Real-time test results
+- 📈 Chart visualizations
 - 📥 Download CSV/Report
+- 🤝 Auto/Manual contribute ke QoSMic (opsional)
 
 ---
 
@@ -222,10 +245,13 @@ results/session_good_signal_5G_8-8-8-8_20260413_123456/
 ```txt
 TARGETS = https://www.instagram.com, https://example.com
 SAMPLE_COUNT = 10
+AUTO_CONTRIBUTE = True
 SIGNAL_THRESHOLD_DBM = -65
 TTFB_GOOD_MS = 200
 TTFB_WARNING_MS = 500
 ONT_DNS = 8.8.8.8
+BRAND = indihome
+NO_INTERNET = 152606221682
 ```
 
 ### Parameter Testing
@@ -234,6 +260,7 @@ ONT_DNS = 8.8.8.8
 | `SAMPLE_COUNT` | 10 | Jumlah pengulangan test per target |
 | `DELAY_SECONDS` | 2 | Jeda antar test (detik) |
 | `PING_DURATION` | 10 | Durasi ping test (detik) |
+| `AUTO_CONTRIBUTE` | True | Jika aktif, setiap row selesai langsung dikirim ke QoSMic |
 | `SIGNAL_THRESHOLD_DBM` | -70 | Threshold good/bad signal |
 | `TTFB_GOOD_MS` | 200 | TTFB dianggap baik jika < nilai ini |
 | `TTFB_WARNING_MS` | 500 | TTFB dianggap warning jika < nilai ini |

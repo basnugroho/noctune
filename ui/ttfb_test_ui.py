@@ -37,6 +37,32 @@ PORT = 8766
 CONFIG_FILE = Path(__file__).parent.parent / "notebooks" / "config.txt"
 RESULTS_DIR = Path(__file__).parent.parent / "notebooks" / "results"
 PRECISE_LOCATION_FILE = Path(__file__).parent.parent / "notebooks" / "precise_location.json"
+CONTRIBUTE_API_URL = "https://qosmic.solusee.id/api/ttfb-results/insert"
+
+EXPORT_FIELDNAMES = [
+    'session_id', 'test_start_time', 'test_end_time',
+    'timestamp', 'time_short', 'target_name', 'brand', 'no_internet', 'sample_num', 'url',
+    'ttfb_ms', 'lookup_ms', 'connect_ms', 'total_ms',
+    'http_code', 'status', 'error',
+    'device_name', 'device_model', 'os_name', 'os_version',
+    'battery_level', 'battery_charging',
+    'wifi_ssid', 'wifi_ssid_method', 'wifi_rssi', 'wifi_band', 'wifi_channel',
+    'signal_threshold', 'signal_status',
+    'dns_primary', 'dns_servers',
+    'location_city', 'location_region', 'location_country',
+    'location_lat', 'location_lon', 'location_accuracy',
+    'location_altitude', 'location_altitude_accuracy',
+    'location_heading', 'location_speed',
+    'location_browser_timestamp', 'location_saved_at', 'location_source',
+    'location_method', 'location_is_precise',
+    'isp', 'public_ip',
+    'config_ttfb_good_ms', 'config_ttfb_warning_ms',
+    'config_sample_count', 'config_delay_seconds',
+    'summary_mean_ttfb', 'summary_median_ttfb',
+    'summary_min_ttfb', 'summary_max_ttfb', 'summary_std_ttfb',
+    'summary_good_count', 'summary_warning_count', 'summary_poor_count',
+    'summary_total_tests', 'summary_successful_tests', 'summary_failed_tests',
+]
 
 
 def sanitize_filename_part(value: str, fallback: str = "Unknown") -> str:
@@ -89,6 +115,197 @@ def load_precise_location(max_age_hours: int = 24) -> dict | None:
     except Exception:
         return None
 
+
+def build_export_rows(results_payload: dict) -> list[dict]:
+    """Build enriched export rows from test_results state."""
+    results = results_payload.get('ttfb_results') or []
+    if not results:
+        return []
+
+    session_id = results_payload.get('session_id', datetime.now().strftime('%Y%m%d_%H%M%S'))
+    network_info = results_payload.get('network_info', {}) or {}
+    location = network_info.get('location', {}) or {}
+    config = results_payload.get('config', {}) or {}
+    summary = results_payload.get('summary', {}) or {}
+    dns_servers = network_info.get('dns_servers', []) or []
+    dns_server_text = ';'.join(dns_servers) if isinstance(dns_servers, list) else str(dns_servers)
+
+    export_rows = []
+    for result in results:
+        row = {
+            'session_id': session_id,
+            'test_start_time': results_payload.get('start_time', ''),
+            'test_end_time': results_payload.get('end_time', ''),
+            'timestamp': result.get('timestamp', ''),
+            'time_short': result.get('time_short', ''),
+            'target_name': result.get('target_name', ''),
+            'brand': config.get('BRAND') or None,
+            'no_internet': config.get('NO_INTERNET') or None,
+            'sample_num': result.get('sample_num', ''),
+            'url': result.get('url', ''),
+            'ttfb_ms': result.get('ttfb_ms'),
+            'lookup_ms': result.get('lookup_ms'),
+            'connect_ms': result.get('connect_ms'),
+            'total_ms': result.get('total_ms'),
+            'http_code': result.get('http_code'),
+            'status': result.get('status', ''),
+            'error': result.get('error'),
+            'device_name': network_info.get('device_name'),
+            'device_model': network_info.get('device_model'),
+            'os_name': network_info.get('os_name'),
+            'os_version': network_info.get('os_version'),
+            'battery_level': network_info.get('battery_level'),
+            'battery_charging': network_info.get('battery_charging'),
+            'wifi_ssid': network_info.get('wifi_ssid'),
+            'wifi_ssid_method': network_info.get('wifi_ssid_method') or 'unknown',
+            'wifi_rssi': network_info.get('wifi_rssi'),
+            'wifi_band': network_info.get('wifi_band'),
+            'wifi_channel': network_info.get('wifi_channel'),
+            'signal_threshold': network_info.get('signal_threshold'),
+            'signal_status': network_info.get('signal_status'),
+            'dns_primary': network_info.get('dns_primary'),
+            'dns_servers': dns_server_text or None,
+            'location_city': location.get('city'),
+            'location_region': location.get('region'),
+            'location_country': location.get('country'),
+            'location_lat': location.get('lat'),
+            'location_lon': location.get('lon'),
+            'location_accuracy': location.get('accuracy'),
+            'location_altitude': location.get('altitude'),
+            'location_altitude_accuracy': location.get('altitude_accuracy'),
+            'location_heading': location.get('heading'),
+            'location_speed': location.get('speed'),
+            'location_browser_timestamp': location.get('browser_timestamp'),
+            'location_saved_at': location.get('saved_at'),
+            'location_source': location.get('source'),
+            'location_method': location.get('method'),
+            'location_is_precise': location.get('is_precise'),
+            'isp': location.get('isp'),
+            'public_ip': location.get('ip'),
+            'config_ttfb_good_ms': config.get('TTFB_GOOD_MS'),
+            'config_ttfb_warning_ms': config.get('TTFB_WARNING_MS'),
+            'config_sample_count': config.get('SAMPLE_COUNT'),
+            'config_delay_seconds': config.get('DELAY_SECONDS'),
+            'summary_mean_ttfb': round(summary.get('mean_ttfb', 0), 2) if summary.get('mean_ttfb') is not None else None,
+            'summary_median_ttfb': round(summary.get('median_ttfb', 0), 2) if summary.get('median_ttfb') is not None else None,
+            'summary_min_ttfb': round(summary.get('min_ttfb', 0), 2) if summary.get('min_ttfb') is not None else None,
+            'summary_max_ttfb': round(summary.get('max_ttfb', 0), 2) if summary.get('max_ttfb') is not None else None,
+            'summary_std_ttfb': round(summary.get('std_ttfb', 0), 2) if summary.get('std_ttfb') is not None else None,
+            'summary_good_count': summary.get('good_count'),
+            'summary_warning_count': summary.get('warning_count'),
+            'summary_poor_count': summary.get('poor_count'),
+            'summary_total_tests': summary.get('total_tests'),
+            'summary_successful_tests': summary.get('successful_tests'),
+            'summary_failed_tests': summary.get('failed_tests'),
+        }
+        export_rows.append(row)
+
+    return export_rows
+
+
+def normalize_sql_datetime(value):
+    """Convert ISO-like datetimes into MySQL DATETIME-compatible strings."""
+    if value in (None, ''):
+        return None
+
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace('Z', '+00:00'))
+            if parsed.tzinfo is not None:
+                parsed = parsed.astimezone().replace(tzinfo=None)
+            return parsed.strftime('%Y-%m-%d %H:%M:%S.%f')
+        except ValueError:
+            return value
+
+    return value
+
+
+def build_contribution_row(row: dict) -> dict:
+    """Normalize one export row for the remote contribute API."""
+    normalized = dict(row)
+    for key in ['test_start_time', 'test_end_time', 'timestamp', 'location_browser_timestamp', 'location_saved_at']:
+        normalized[key] = normalize_sql_datetime(normalized.get(key))
+    return normalized
+
+
+def calculate_summary(results: list[dict]) -> dict:
+    """Calculate summary metrics for the current result set."""
+    valid_results = [result for result in results if result.get('ttfb_ms') is not None]
+    if not valid_results:
+        return {
+            'total_tests': len(results),
+            'successful_tests': 0,
+            'failed_tests': len(results),
+            'mean_ttfb': None,
+            'median_ttfb': None,
+            'std_ttfb': None,
+            'min_ttfb': None,
+            'max_ttfb': None,
+            'good_count': 0,
+            'warning_count': 0,
+            'poor_count': 0,
+        }
+
+    ttfbs = [result['ttfb_ms'] for result in valid_results]
+    sorted_ttfbs = sorted(ttfbs)
+    mean_ttfb = sum(ttfbs) / len(ttfbs)
+    mid = len(sorted_ttfbs) // 2
+    if len(sorted_ttfbs) % 2 == 0:
+        median_ttfb = (sorted_ttfbs[mid - 1] + sorted_ttfbs[mid]) / 2
+    else:
+        median_ttfb = sorted_ttfbs[mid]
+    std_ttfb = (sum((value - mean_ttfb) ** 2 for value in ttfbs) / len(ttfbs)) ** 0.5
+
+    return {
+        'total_tests': len(results),
+        'successful_tests': len(valid_results),
+        'failed_tests': len(results) - len(valid_results),
+        'mean_ttfb': mean_ttfb,
+        'median_ttfb': median_ttfb,
+        'std_ttfb': std_ttfb,
+        'min_ttfb': min(ttfbs),
+        'max_ttfb': max(ttfbs),
+        'good_count': len([result for result in valid_results if result['status'] == 'good']),
+        'warning_count': len([result for result in valid_results if result['status'] == 'warning']),
+        'poor_count': len([result for result in valid_results if result['status'] == 'poor']),
+    }
+
+
+def submit_contribution_row(row: dict, index: int, total: int) -> tuple[bool, str]:
+    """Submit a single row to the contribution API."""
+    contribution_row = build_contribution_row(row)
+    payload = json.dumps({'row': contribution_row}).encode('utf-8')
+    request = urllib.request.Request(
+        CONTRIBUTE_API_URL,
+        data=payload,
+        headers={
+            'Content-Type': 'application/json',
+            'Accept': 'application/json',
+            'User-Agent': 'NOC-Tune/1.0'
+        },
+        method='POST'
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=20):
+            pass
+        add_log(
+            f"Contribute row {index}/{total} OK: {row.get('target_name')} sample #{row.get('sample_num')}",
+            'success'
+        )
+        return True, ''
+    except Exception as e:
+        response_text = ''
+        if hasattr(e, 'read'):
+            try:
+                response_text = e.read().decode('utf-8', errors='replace')
+            except Exception:
+                response_text = ''
+        error_suffix = f" | Response: {response_text}" if response_text else ''
+        error_message = f"Row {index} failed for {row.get('target_name')} sample #{row.get('sample_num')}: {e}{error_suffix}"
+        add_log(error_message, 'error')
+        return False, error_message
+
 # Global state
 test_queue = queue.Queue()
 log_queue = queue.Queue()
@@ -106,10 +323,13 @@ def parse_config(config_path: Path) -> dict:
         'SAMPLE_COUNT': 5,
         'DELAY_SECONDS': 2,
         'PING_DURATION': 10,
+        'AUTO_CONTRIBUTE': True,
         'SIGNAL_THRESHOLD_DBM': -70,
         'TTFB_GOOD_MS': 200,
         'TTFB_WARNING_MS': 500,
-        'ONT_DNS': ''
+        'ONT_DNS': '',
+        'BRAND': '',
+        'NO_INTERNET': ''
     }
     
     if not config_path.exists():
@@ -133,8 +353,10 @@ def parse_config(config_path: Path) -> dict:
                 elif key in ['SAMPLE_COUNT', 'DELAY_SECONDS', 'PING_DURATION', 
                            'SIGNAL_THRESHOLD_DBM', 'TTFB_GOOD_MS', 'TTFB_WARNING_MS']:
                     config[key] = int(value)
-                elif key == 'ONT_DNS':
-                    config['ONT_DNS'] = value
+                elif key == 'AUTO_CONTRIBUTE':
+                    config[key] = value.lower() in ['true', '1', 'yes', 'on']
+                elif key in ['ONT_DNS', 'BRAND', 'NO_INTERNET']:
+                    config[key] = value
     except Exception as e:
         print(f"Error parsing config: {e}")
     
@@ -157,7 +379,8 @@ def save_config(config: dict, config_path: Path) -> bool:
             f.write("# Test Parameters\n")
             f.write(f"SAMPLE_COUNT = {config.get('SAMPLE_COUNT', 5)}\n")
             f.write(f"DELAY_SECONDS = {config.get('DELAY_SECONDS', 2)}\n")
-            f.write(f"PING_DURATION = {config.get('PING_DURATION', 10)}\n\n")
+            f.write(f"PING_DURATION = {config.get('PING_DURATION', 10)}\n")
+            f.write(f"AUTO_CONTRIBUTE = {'True' if config.get('AUTO_CONTRIBUTE', True) else 'False'}\n\n")
             
             f.write("# Thresholds\n")
             f.write(f"SIGNAL_THRESHOLD_DBM = {config.get('SIGNAL_THRESHOLD_DBM', -70)}\n")
@@ -165,7 +388,11 @@ def save_config(config: dict, config_path: Path) -> bool:
             f.write(f"TTFB_WARNING_MS = {config.get('TTFB_WARNING_MS', 500)}\n\n")
             
             f.write("# Optional: ONT DNS (fallback if auto-detect fails)\n")
-            f.write(f"ONT_DNS = {config.get('ONT_DNS', '')}\n")
+            f.write(f"ONT_DNS = {config.get('ONT_DNS', '')}\n\n")
+
+            f.write("# Optional: Contribution metadata\n")
+            f.write(f"BRAND = {config.get('BRAND', '')}\n")
+            f.write(f"NO_INTERNET = {config.get('NO_INTERNET', '')}\n")
         
         return True
     except Exception as e:
@@ -720,6 +947,7 @@ def run_tests(config: dict):
         'summary': {},
         'status': 'running',
         'elapsed_seconds': 0,
+        'contribution': {'status': 'idle', 'submitted': 0, 'failed': 0, 'total': 0},
         '_start_time_obj': test_start_time  # For internal calculation
     }
     
@@ -821,6 +1049,16 @@ def run_tests(config: dict):
         targets = config.get('TARGETS', [])
         sample_count = config.get('SAMPLE_COUNT', 5)
         delay = config.get('DELAY_SECONDS', 2)
+        auto_contribute = config.get('AUTO_CONTRIBUTE', True)
+        total_samples = len(targets) * sample_count
+        contribution_errors = []
+
+        if auto_contribute:
+            test_results['contribution'] = {'status': 'running', 'submitted': 0, 'failed': 0, 'total': total_samples, 'errors': []}
+            add_log('Auto Contribute is enabled. Each completed row will be submitted automatically.', 'info')
+        else:
+            test_results['contribution'] = {'status': 'idle', 'submitted': 0, 'failed': 0, 'total': total_samples, 'errors': []}
+            add_log('Auto Contribute is disabled. Use the Contribute button after the test finishes.', 'info')
         
         all_results = []
         
@@ -859,6 +1097,24 @@ def run_tests(config: dict):
                 
                 target_results.append(result)
                 all_results.append(result)
+                test_results['ttfb_results'] = all_results
+                test_results['elapsed_seconds'] = (datetime.now() - test_results['_start_time_obj']).total_seconds()
+                test_results['end_time'] = datetime.now().isoformat()
+                test_results['summary'] = calculate_summary(all_results)
+
+                if auto_contribute:
+                    export_rows = build_export_rows(test_results)
+                    current_row = export_rows[-1] if export_rows else None
+                    if current_row:
+                        row_done = len(all_results)
+                        ok, error_message = submit_contribution_row(current_row, row_done, total_samples)
+                        if ok:
+                            test_results['contribution']['submitted'] += 1
+                        else:
+                            test_results['contribution']['failed'] += 1
+                            contribution_errors.append(error_message)
+                        test_results['contribution']['errors'] = contribution_errors
+                        test_results['contribution']['status'] = 'running'
                 
                 # Log result
                 if result['ttfb_ms']:
@@ -868,12 +1124,7 @@ def run_tests(config: dict):
                 else:
                     add_log(f"  Sample {sample_num}/{sample_count}: ERROR - {result.get('error', 'Unknown')}", 'error')
                 
-                # Update test_results for real-time display
-                test_results['ttfb_results'] = all_results
-                test_results['elapsed_seconds'] = (datetime.now() - test_results['_start_time_obj']).total_seconds()
-                
                 # Terminal progress
-                total_samples = len(targets) * sample_count
                 done = (target_idx - 1) * sample_count + sample_num
                 pct = int(done / total_samples * 100)
                 bar_len = 30
@@ -898,29 +1149,9 @@ def run_tests(config: dict):
         add_log('', 'divider')
         add_log('Calculating summary...', 'info')
         
-        valid_results = [r for r in all_results if r.get('ttfb_ms')]
-        if valid_results:
-            ttfbs = [r['ttfb_ms'] for r in valid_results]
-            sorted_ttfbs = sorted(ttfbs)
-            mean_ttfb = sum(ttfbs) / len(ttfbs)
-            median_ttfb = sorted_ttfbs[len(sorted_ttfbs) // 2]
-            std_ttfb = (sum((x - mean_ttfb) ** 2 for x in ttfbs) / len(ttfbs)) ** 0.5
-            
-            test_results['summary'] = {
-                'total_tests': len(all_results),
-                'successful_tests': len(valid_results),
-                'failed_tests': len(all_results) - len(valid_results),
-                'mean_ttfb': mean_ttfb,
-                'median_ttfb': median_ttfb,
-                'std_ttfb': std_ttfb,
-                'min_ttfb': min(ttfbs),
-                'max_ttfb': max(ttfbs),
-                'good_count': len([r for r in valid_results if r['status'] == 'good']),
-                'warning_count': len([r for r in valid_results if r['status'] == 'warning']),
-                'poor_count': len([r for r in valid_results if r['status'] == 'poor'])
-            }
-            
-            summary = test_results['summary']
+        test_results['summary'] = calculate_summary(all_results)
+        summary = test_results['summary']
+        if summary.get('successful_tests'):
             add_log(f"Total tests: {summary['total_tests']} ({summary['successful_tests']} successful)", 'info')
             add_log(f"Mean TTFB: {summary['mean_ttfb']:.0f}ms, Median: {summary['median_ttfb']:.0f}ms", 'info')
             add_log(f"Range: {summary['min_ttfb']:.0f}ms - {summary['max_ttfb']:.0f}ms (Std: {summary['std_ttfb']:.0f}ms)", 'info')
@@ -958,6 +1189,14 @@ def run_tests(config: dict):
         test_results['status'] = 'completed'
         test_results['end_time'] = datetime.now().isoformat()
         test_results['session_dir'] = str(current_session_dir)
+        if auto_contribute:
+            failed = test_results['contribution'].get('failed', 0)
+            submitted = test_results['contribution'].get('submitted', 0)
+            test_results['contribution']['status'] = 'success' if failed == 0 else ('partial' if submitted > 0 else 'error')
+            if failed == 0:
+                add_log(f"Auto Contribute finished: {submitted}/{total_samples} row(s) submitted", 'success')
+            else:
+                add_log(f"Auto Contribute finished with issues: {submitted}/{total_samples} submitted, {failed} failed", 'warning')
         
         # Clear progress bar line
         print()
@@ -1076,6 +1315,22 @@ HTML_TEMPLATE = """
         .status-badge.running { background: rgba(33, 150, 243, 0.2); color: #64b5f6; }
         .status-badge.paused { background: rgba(255, 152, 0, 0.2); color: #ffb74d; }
         .status-badge.stopped { background: rgba(158, 158, 158, 0.2); color: #bdbdbd; }
+        .mode-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.78em;
+            font-weight: 500;
+            white-space: nowrap;
+            border: 1px solid rgba(255,255,255,0.08);
+        }
+        .mode-badge.on {
+            background: rgba(76, 175, 80, 0.16);
+            color: #81c784;
+        }
+        .mode-badge.off {
+            background: rgba(255, 152, 0, 0.16);
+            color: #ffb74d;
+        }
         
         /* Control buttons */
         .control-buttons {
@@ -1123,6 +1378,9 @@ HTML_TEMPLATE = """
         .tab.active {
             color: #00d2ff;
             border-bottom-color: #00d2ff;
+        }
+        .tab:not(.disabled) {
+            cursor: pointer;
         }
         .tab.disabled {
             color: #555;
@@ -1592,6 +1850,73 @@ HTML_TEMPLATE = """
             flex-direction: column;
             border-left: 1px solid rgba(255,255,255,0.1);
         }
+        .info-page {
+            grid-column: 1 / -1;
+            display: none;
+            background: #12121f;
+            padding: 28px 32px 36px;
+            overflow-y: auto;
+        }
+        .info-page.active {
+            display: block;
+        }
+        .info-hero {
+            background: linear-gradient(135deg, rgba(0,210,255,0.12), rgba(58,123,213,0.08));
+            border: 1px solid rgba(0,210,255,0.14);
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 22px;
+        }
+        .info-hero h2 {
+            margin: 0 0 10px;
+            font-size: 1.35em;
+            color: #f4f7ff;
+        }
+        .info-hero p {
+            margin: 0;
+            color: #aeb8d4;
+            line-height: 1.7;
+            max-width: 900px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 18px;
+        }
+        .info-card {
+            background: rgba(255,255,255,0.03);
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 14px;
+            padding: 18px 18px 16px;
+        }
+        .info-card h3 {
+            margin: 0 0 10px;
+            font-size: 1em;
+            color: #f3f6ff;
+        }
+        .info-card p {
+            margin: 0;
+            color: #a4abc2;
+            line-height: 1.65;
+        }
+        .info-list {
+            margin: 0;
+            padding-left: 18px;
+            color: #a4abc2;
+            line-height: 1.7;
+        }
+        .info-list li + li {
+            margin-top: 8px;
+        }
+        .info-note {
+            margin-top: 20px;
+            padding: 14px 16px;
+            background: rgba(255,255,255,0.03);
+            border-left: 3px solid rgba(0,210,255,0.45);
+            border-radius: 10px;
+            color: #b8c3df;
+            line-height: 1.7;
+        }
         .logs-header {
             padding: 16px 20px;
             border-bottom: 1px solid rgba(255,255,255,0.1);
@@ -1765,6 +2090,7 @@ HTML_TEMPLATE = """
             </div>
             <div class="header-status">
                 <span class="status-badge" id="status-badge">Checking...</span>
+                <span class="mode-badge on" id="auto-contribute-badge">Auto Contribute: ON</span>
                 <div class="control-buttons" id="control-buttons" style="display: none;">
                     <button class="btn-control btn-pause" id="pause-btn" onclick="pauseTest()" title="Pause">⏸️</button>
                     <button class="btn-control btn-stop" id="stop-btn" onclick="stopTest()" title="Stop">⏹️</button>
@@ -1779,12 +2105,97 @@ HTML_TEMPLATE = """
         <!-- Tab Bar -->
         <div class="tab-bar">
             <div class="tab active" data-tab="ttfb">TTFB Test</div>
-            <div class="tab disabled" data-tab="speed">Speed Test <span class="tab-badge">Soon</span></div>
-            <div class="tab disabled" data-tab="latency">Latency Map <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="latency">Latency <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="packet-loss">Packet Loss <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="download">Download Speed <span class="tab-badge">Soon</span></div>
+            <div class="tab disabled" data-tab="upload">Upload Speed <span class="tab-badge">Soon</span></div>
+            <div class="tab" data-tab="privacy">Privacy Policy</div>
+            <div class="tab" data-tab="about">About</div>
             <div class="network-url-box" id="network-url-box" style="display: none;">
                 <span class="network-url-label">🌐 Network:</span>
                 <span class="network-url-value" id="network-url" onclick="copyNetworkUrl()" title="Click to copy"></span>
             </div>
+        </div>
+
+        <div class="info-page" id="privacy-page">
+            <div class="info-hero">
+                <h2>Privacy Policy</h2>
+                <p>NOC Tune membantu mengukur kualitas akses ke website target. Beberapa data teknis dibaca agar hasilnya lebih akurat. Anda tetap memegang kendali penuh, terutama untuk fitur contribute yang bisa dibuat otomatis atau manual.</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Data yang dibaca saat test</h3>
+                    <ul class="info-list">
+                        <li>Hasil TTFB, DNS lookup, connect time, total time, dan status HTTP.</li>
+                        <li>Informasi perangkat dan jaringan seperti nama device, OS, RSSI, SSID, band WiFi, channel, DNS, ISP, dan IP publik.</li>
+                        <li>Koordinat lokasi jika browser geolocation diizinkan, agar hasil test mewakili lokasi sebenarnya.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Data yang disimpan lokal</h3>
+                    <ul class="info-list">
+                        <li>Session info, hasil ping, hasil TTFB, CSV, dan report di folder results.</li>
+                        <li>Config test seperti target, threshold, brand, no internet, dan pilihan auto contribute.</li>
+                        <li>Lokasi presisi terakhir di file lokal agar export dan report tetap konsisten.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Kapan data dikirim keluar</h3>
+                    <ul class="info-list">
+                        <li>Jika Auto Contribute aktif, setiap row hasil test akan langsung dikirim ke qosmic.solusee.id.</li>
+                        <li>Jika Auto Contribute mati, data tidak dikirim otomatis dan hanya terkirim saat tombol Contribute ditekan.</li>
+                        <li>Reverse geocoding memakai layanan OpenStreetMap untuk mengubah koordinat menjadi nama kota/region.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Kendali di tangan user</h3>
+                    <ul class="info-list">
+                        <li>Anda bisa menyalakan atau mematikan Auto Contribute dari Configuration.</li>
+                        <li>Brand dan No Internet bersifat opsional dan bisa dikosongkan.</li>
+                        <li>Anda bisa menjalankan test hanya untuk kebutuhan lokal tanpa mengirim hasil ke layanan kontribusi.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="info-note">Ringkasnya: aplikasi ini fokus pada data teknis jaringan untuk kebutuhan pengukuran. Pengiriman ke layanan QoSMic bersifat opsional dan bisa diatur dari config.</div>
+        </div>
+
+        <div class="info-page" id="about-page">
+            <div class="info-hero">
+                <h2>About NOC Tune</h2>
+                <p>NOC Tune adalah aplikasi browser-based untuk mengukur Time To First Byte secara otomatis. Tool ini membantu melihat kualitas akses ke target tertentu dengan cepat, lengkap, dan mudah dipahami.</p>
+            </div>
+            <div class="info-grid">
+                <div class="info-card">
+                    <h3>Apa yang dilakukan aplikasi ini</h3>
+                    <ul class="info-list">
+                        <li>Mengukur TTFB ke satu atau banyak target secara berulang.</li>
+                        <li>Mencatat detail teknis jaringan saat test berlangsung.</li>
+                        <li>Menampilkan hasil secara real-time di browser.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Kelebihan utamanya</h3>
+                    <ul class="info-list">
+                        <li>Auto ukur TTFB tanpa perlu command manual berulang.</li>
+                        <li>Auto mencatat detail penting seperti DNS, WiFi, lokasi, ISP, dan perangkat.</li>
+                        <li>Visualisasi hasil dalam tabel, summary card, dan chart.</li>
+                        <li>Hasil bisa diunduh sebagai CSV dan report.</li>
+                    </ul>
+                </div>
+                <div class="info-card">
+                    <h3>Contribute ke QoSMic</h3>
+                    <p>NOC Tune bisa mengirim hasil ke qosmic.solusee.id agar data pengukuran terkumpul. Fitur ini opsional. Anda bisa memilih submit otomatis per row atau submit manual setelah test selesai.</p>
+                </div>
+                <div class="info-card">
+                    <h3>Cocok dipakai untuk</h3>
+                    <ul class="info-list">
+                        <li>Validasi kualitas akses ke CDN atau website tertentu.</li>
+                        <li>Membandingkan kondisi jaringan antar lokasi atau antar band WiFi.</li>
+                        <li>Membuat bukti teknis yang lebih lengkap saat troubleshooting.</li>
+                    </ul>
+                </div>
+            </div>
+            <div class="info-note">Singkatnya: NOC Tune membantu Anda mengukur TTFB secara otomatis, melihat konteks jaringan dengan lebih lengkap, dan membagikan hasil ke QoSMic bila memang dibutuhkan.</div>
         </div>
         
         <!-- Config Panel -->
@@ -1813,6 +2224,13 @@ HTML_TEMPLATE = """
                     <label>Ping duration (seconds)</label>
                     <input type="number" id="ping-duration" value="10" min="1" max="120">
                 </div>
+                <div class="form-group">
+                    <label style="display: flex; align-items: center; gap: 10px; margin-bottom: 0;">
+                        <input type="checkbox" id="auto-contribute" checked style="width: auto;">
+                        <span>Auto Contribute</span>
+                    </label>
+                    <small>Default aktif. Jika aktif, setiap row hasil test langsung dikirim ke qosmic.solusee.id.</small>
+                </div>
             </div>
             
             <div class="config-section">
@@ -1830,6 +2248,20 @@ HTML_TEMPLATE = """
                 <div class="form-group">
                     <label>Signal threshold (dBm)</label>
                     <input type="number" id="signal-threshold" value="-70" max="0">
+                </div>
+            </div>
+
+            <div class="config-section">
+                <h3>Contribution Metadata</h3>
+                <div class="form-group">
+                    <label>Brand</label>
+                    <input type="text" id="brand" placeholder="indihome">
+                    <small>Optional. Akan ikut disubmit ke QoSMic saat contribute manual atau otomatis.</small>
+                </div>
+                <div class="form-group">
+                    <label>No Internet</label>
+                    <input type="text" id="no-internet" placeholder="152606221682">
+                    <small>Optional. Akan ikut disubmit ke QoSMic saat contribute manual atau otomatis.</small>
                 </div>
             </div>
             
@@ -1907,6 +2339,7 @@ HTML_TEMPLATE = """
                         <div class="btn-group">
                             <button class="btn btn-success" onclick="downloadCSV()" id="download-csv-btn">📥 Download CSV</button>
                             <button class="btn btn-primary" onclick="downloadReport()" id="download-report-btn">📄 Download Report</button>
+                            <button class="btn btn-secondary" onclick="contributeResults()" id="contribute-btn">🤝 Contribute</button>
                         </div>
                     </div>
                 </div>
@@ -1975,17 +2408,53 @@ HTML_TEMPLATE = """
         let isRunning = false;
         let isPaused = false;
         let pollInterval = null;
+        let activeTab = 'ttfb';
         let lastMapCoords = null;  // Track map coordinates to prevent flickering
         let browserLocation = null;  // Browser geolocation override
         let cachedNetworkInfo = null;  // Last network info from server
         
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
+            setupTabs();
+            switchTab('ttfb');
             loadConfig();
             checkPrereqs();
             loadNetworkInfo();
             requestBrowserLocation();
+            document.getElementById('auto-contribute').addEventListener('change', () => {
+                updateAutoContributeBadge(document.getElementById('auto-contribute').checked);
+            });
         });
+
+        function updateAutoContributeBadge(enabled) {
+            const badge = document.getElementById('auto-contribute-badge');
+            if (!badge) return;
+            badge.textContent = `Auto Contribute: ${enabled ? 'ON' : 'OFF'}`;
+            badge.className = 'mode-badge ' + (enabled ? 'on' : 'off');
+        }
+
+        function setupTabs() {
+            document.querySelectorAll('.tab[data-tab]').forEach((tab) => {
+                if (tab.classList.contains('disabled')) return;
+                tab.addEventListener('click', () => switchTab(tab.dataset.tab));
+            });
+        }
+
+        function switchTab(tabName) {
+            activeTab = tabName;
+
+            document.querySelectorAll('.tab[data-tab]').forEach((tab) => {
+                tab.classList.toggle('active', tab.dataset.tab === tabName);
+            });
+
+            const isTtfb = tabName === 'ttfb';
+            document.querySelector('.config-panel').style.display = isTtfb ? '' : 'none';
+            document.querySelector('.results-panel').style.display = isTtfb ? '' : 'none';
+            document.querySelector('.logs-panel').style.display = isTtfb ? '' : 'none';
+
+            document.getElementById('about-page').classList.toggle('active', tabName === 'about');
+            document.getElementById('privacy-page').classList.toggle('active', tabName === 'privacy');
+        }
         
         // Request browser geolocation for precise coordinates
         function requestBrowserLocation() {
@@ -2194,9 +2663,13 @@ HTML_TEMPLATE = """
                 document.getElementById('sample-count').value = config.SAMPLE_COUNT || 5;
                 document.getElementById('delay-seconds').value = config.DELAY_SECONDS || 2;
                 document.getElementById('ping-duration').value = config.PING_DURATION || 10;
+                document.getElementById('auto-contribute').checked = config.AUTO_CONTRIBUTE !== false;
+                updateAutoContributeBadge(config.AUTO_CONTRIBUTE !== false);
                 document.getElementById('ttfb-good').value = config.TTFB_GOOD_MS || 200;
                 document.getElementById('ttfb-warning').value = config.TTFB_WARNING_MS || 500;
                 document.getElementById('signal-threshold').value = config.SIGNAL_THRESHOLD_DBM || -70;
+                document.getElementById('brand').value = config.BRAND || '';
+                document.getElementById('no-internet').value = config.NO_INTERNET || '';
             } catch (e) {
                 console.error('Error loading config:', e);
             }
@@ -2208,9 +2681,13 @@ HTML_TEMPLATE = """
             document.getElementById('sample-count').value = 10;
             document.getElementById('delay-seconds').value = 30;
             document.getElementById('ping-duration').value = 60;
+            document.getElementById('auto-contribute').checked = true;
+            updateAutoContributeBadge(true);
             document.getElementById('ttfb-good').value = 600;
             document.getElementById('ttfb-warning').value = 800;
             document.getElementById('signal-threshold').value = -65;
+            document.getElementById('brand').value = '';
+            document.getElementById('no-internet').value = '';
             addLog('Configuration reset to defaults (not saved yet)', 'info');
         }
         
@@ -2224,9 +2701,12 @@ HTML_TEMPLATE = """
                 SAMPLE_COUNT: parseInt(document.getElementById('sample-count').value) || 5,
                 DELAY_SECONDS: parseInt(document.getElementById('delay-seconds').value) || 2,
                 PING_DURATION: parseInt(document.getElementById('ping-duration').value) || 10,
+                AUTO_CONTRIBUTE: document.getElementById('auto-contribute').checked,
                 TTFB_GOOD_MS: parseInt(document.getElementById('ttfb-good').value) || 200,
                 TTFB_WARNING_MS: parseInt(document.getElementById('ttfb-warning').value) || 500,
-                SIGNAL_THRESHOLD_DBM: parseInt(document.getElementById('signal-threshold').value) || -70
+                SIGNAL_THRESHOLD_DBM: parseInt(document.getElementById('signal-threshold').value) || -70,
+                BRAND: document.getElementById('brand').value.trim(),
+                NO_INTERNET: document.getElementById('no-internet').value.trim()
             };
             
             try {
@@ -2238,6 +2718,7 @@ HTML_TEMPLATE = """
                 
                 const result = await response.json();
                 if (result.success) {
+                    updateAutoContributeBadge(config.AUTO_CONTRIBUTE !== false);
                     addLog('Configuration saved', 'success');
                 } else {
                     addLog('Failed to save config: ' + result.error, 'error');
@@ -2349,10 +2830,14 @@ HTML_TEMPLATE = """
                 SAMPLE_COUNT: parseInt(document.getElementById('sample-count').value) || 5,
                 DELAY_SECONDS: parseInt(document.getElementById('delay-seconds').value) || 2,
                 PING_DURATION: parseInt(document.getElementById('ping-duration').value) || 10,
+                AUTO_CONTRIBUTE: document.getElementById('auto-contribute').checked,
                 TTFB_GOOD_MS: parseInt(document.getElementById('ttfb-good').value) || 200,
                 TTFB_WARNING_MS: parseInt(document.getElementById('ttfb-warning').value) || 500,
-                SIGNAL_THRESHOLD_DBM: parseInt(document.getElementById('signal-threshold').value) || -70
+                SIGNAL_THRESHOLD_DBM: parseInt(document.getElementById('signal-threshold').value) || -70,
+                BRAND: document.getElementById('brand').value.trim(),
+                NO_INTERNET: document.getElementById('no-internet').value.trim()
             };
+            updateAutoContributeBadge(config.AUTO_CONTRIBUTE !== false);
             
             try {
                 // Start test
@@ -2612,6 +3097,7 @@ HTML_TEMPLATE = """
             const summaryCards = document.getElementById('summary-cards');
             const tbody = document.getElementById('results-tbody');
             const downloadSection = document.getElementById('download-section');
+            const contributeBtn = document.getElementById('contribute-btn');
             
             emptyState.style.display = 'none';
             resultsSection.style.display = 'block';
@@ -2665,6 +3151,13 @@ HTML_TEMPLATE = """
             // Show download buttons when completed
             if (status.status === 'completed') {
                 downloadSection.style.display = 'block';
+                if (contributeBtn) {
+                    const autoContribute = status.config && status.config.AUTO_CONTRIBUTE !== false;
+                    updateAutoContributeBadge(autoContribute);
+                    contributeBtn.style.display = autoContribute ? 'none' : '';
+                    contributeBtn.disabled = false;
+                    contributeBtn.textContent = '🤝 Contribute';
+                }
                 drawCharts(status);
             } else {
                 downloadSection.style.display = 'none';
@@ -3131,6 +3624,37 @@ HTML_TEMPLATE = """
                 addLog('Error downloading report: ' + e.message, 'error');
             }
         }
+
+        async function contributeResults() {
+            const button = document.getElementById('contribute-btn');
+            if (!button) return;
+
+            const originalText = button.textContent;
+            button.disabled = true;
+            button.textContent = '⏳ Contributing...';
+
+            try {
+                const response = await fetch('/api/contribute', { method: 'POST' });
+                const result = await response.json();
+
+                if (!response.ok || !result.success) {
+                    throw new Error(result.error || 'Contribution failed');
+                }
+
+                if (result.failed > 0) {
+                    button.disabled = false;
+                    button.textContent = '🔁 Retry Failed';
+                    addLog(`Contribute partial: ${result.submitted}/${result.total} submitted, ${result.failed} failed`, 'warning');
+                } else {
+                    button.textContent = `✅ Contributed (${result.submitted})`;
+                    addLog(`Contribute success: ${result.submitted}/${result.total} rows submitted`, 'success');
+                }
+            } catch (e) {
+                button.disabled = false;
+                button.textContent = originalText;
+                addLog('Error contributing results: ' + e.message, 'error');
+            }
+        }
         
         // Reset test UI
         function resetTestUI() {
@@ -3240,6 +3764,9 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             
         elif self.path == '/api/download/report':
             self.handle_download_report()
+
+        elif self.path == '/api/contribute/status':
+            self.send_json(test_results.get('contribution', {'status': 'idle'}))
             
         else:
             self.send_response(404)
@@ -3269,116 +3796,16 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             
             filename = f"ttfb_results_{city}_{band}_{dns}_{session_id}.csv"
             
-            # Comprehensive field list - ALL available data
-            fieldnames = [
-                # Session info
-                'session_id', 'test_start_time', 'test_end_time',
-                # Test result fields
-                'timestamp', 'time_short', 'target_name', 'sample_num', 'url',
-                'ttfb_ms', 'lookup_ms', 'connect_ms', 'total_ms',
-                'http_code', 'status', 'error',
-                # Device info
-                'device_name', 'device_model', 'os_name', 'os_version',
-                'battery_level', 'battery_charging',
-                # WiFi Signal info
-                'wifi_ssid', 'wifi_ssid_method', 'wifi_rssi', 'wifi_band', 'wifi_channel',
-                'signal_threshold', 'signal_status',
-                # DNS info
-                'dns_primary', 'dns_servers',
-                # Location info
-                'location_city', 'location_region', 'location_country',
-                'location_lat', 'location_lon', 'location_accuracy',
-                'location_altitude', 'location_altitude_accuracy',
-                'location_heading', 'location_speed',
-                'location_browser_timestamp', 'location_saved_at', 'location_source',
-                'location_method', 'location_is_precise',
-                'isp', 'public_ip',
-                # Config thresholds
-                'config_ttfb_good_ms', 'config_ttfb_warning_ms',
-                'config_sample_count', 'config_delay_seconds',
-                # Summary stats (same for all rows)
-                'summary_mean_ttfb', 'summary_median_ttfb',
-                'summary_min_ttfb', 'summary_max_ttfb', 'summary_std_ttfb',
-                'summary_good_count', 'summary_warning_count', 'summary_poor_count',
-                'summary_total_tests', 'summary_successful_tests', 'summary_failed_tests',
-            ]
-            
+            fieldnames = EXPORT_FIELDNAMES
+
             # Create CSV content
             output = io.StringIO()
-            results = test_results['ttfb_results']
+            rows = build_export_rows(test_results)
             
-            if results:
+            if rows:
                 writer = csv.DictWriter(output, fieldnames=fieldnames, extrasaction='ignore')
                 writer.writeheader()
-                
-                for result in results:
-                    row = dict(result)
-                    
-                    # Session info
-                    row['session_id'] = session_id
-                    row['test_start_time'] = test_results.get('start_time', '')
-                    row['test_end_time'] = test_results.get('end_time', '')
-                    
-                    # Device info
-                    row['device_name'] = network_info.get('device_name', '')
-                    row['device_model'] = network_info.get('device_model', '')
-                    row['os_name'] = network_info.get('os_name', '')
-                    row['os_version'] = network_info.get('os_version', '')
-                    row['battery_level'] = network_info.get('battery_level', '')
-                    row['battery_charging'] = network_info.get('battery_charging', '')
-                    
-                    # WiFi Signal info
-                    row['wifi_ssid'] = network_info.get('wifi_ssid', '')
-                    row['wifi_ssid_method'] = network_info.get('wifi_ssid_method', '')
-                    row['wifi_rssi'] = network_info.get('wifi_rssi', '')
-                    row['wifi_band'] = network_info.get('wifi_band', '')
-                    row['wifi_channel'] = network_info.get('wifi_channel', '')
-                    row['signal_threshold'] = network_info.get('signal_threshold', '')
-                    row['signal_status'] = network_info.get('signal_status', '')
-                    
-                    # DNS info
-                    row['dns_primary'] = network_info.get('dns_primary', '')
-                    dns_servers = network_info.get('dns_servers', [])
-                    row['dns_servers'] = ';'.join(dns_servers) if dns_servers else ''
-                    
-                    # Location info
-                    row['location_city'] = location.get('city', '')
-                    row['location_region'] = location.get('region', '')
-                    row['location_country'] = location.get('country', '')
-                    row['location_lat'] = location.get('lat', '')
-                    row['location_lon'] = location.get('lon', '')
-                    row['location_accuracy'] = location.get('accuracy', '')
-                    row['location_altitude'] = location.get('altitude', '')
-                    row['location_altitude_accuracy'] = location.get('altitude_accuracy', '')
-                    row['location_heading'] = location.get('heading', '')
-                    row['location_speed'] = location.get('speed', '')
-                    row['location_browser_timestamp'] = location.get('browser_timestamp', '')
-                    row['location_saved_at'] = location.get('saved_at', '')
-                    row['location_source'] = location.get('source', '')
-                    row['location_method'] = location.get('method', '')
-                    row['location_is_precise'] = location.get('is_precise', '')
-                    row['isp'] = location.get('isp', '')
-                    row['public_ip'] = location.get('ip', '')
-                    
-                    # Config thresholds
-                    row['config_ttfb_good_ms'] = config.get('TTFB_GOOD_MS', '')
-                    row['config_ttfb_warning_ms'] = config.get('TTFB_WARNING_MS', '')
-                    row['config_sample_count'] = config.get('SAMPLE_COUNT', '')
-                    row['config_delay_seconds'] = config.get('DELAY_SECONDS', '')
-                    
-                    # Summary stats
-                    row['summary_mean_ttfb'] = round(summary.get('mean_ttfb', 0), 2) if summary.get('mean_ttfb') else ''
-                    row['summary_median_ttfb'] = round(summary.get('median_ttfb', 0), 2) if summary.get('median_ttfb') else ''
-                    row['summary_min_ttfb'] = round(summary.get('min_ttfb', 0), 2) if summary.get('min_ttfb') else ''
-                    row['summary_max_ttfb'] = round(summary.get('max_ttfb', 0), 2) if summary.get('max_ttfb') else ''
-                    row['summary_std_ttfb'] = round(summary.get('std_ttfb', 0), 2) if summary.get('std_ttfb') else ''
-                    row['summary_good_count'] = summary.get('good_count', '')
-                    row['summary_warning_count'] = summary.get('warning_count', '')
-                    row['summary_poor_count'] = summary.get('poor_count', '')
-                    row['summary_total_tests'] = summary.get('total_tests', '')
-                    row['summary_successful_tests'] = summary.get('successful_tests', '')
-                    row['summary_failed_tests'] = summary.get('failed_tests', '')
-                    
+                for row in rows:
                     writer.writerow(row)
             
             csv_content = output.getvalue().encode('utf-8')
@@ -3421,6 +3848,11 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             lines.append(f"Session ID: {session_id}")
             lines.append(f"Start Time: {test_results.get('start_time', 'N/A')}")
             lines.append(f"End Time: {test_results.get('end_time', 'N/A')}")
+            config = test_results.get('config', {})
+            if config.get('BRAND'):
+                lines.append(f"Brand: {config.get('BRAND')}")
+            if config.get('NO_INTERNET'):
+                lines.append(f"No Internet: {config.get('NO_INTERNET')}")
             lines.append("")
             
             # Network conditions
@@ -3478,7 +3910,6 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             summary = test_results.get('summary', {})
             if summary:
                 mean_ttfb = summary.get('mean_ttfb', 0)
-                config = test_results.get('config', {})
                 ttfb_good = config.get('TTFB_GOOD_MS', 200)
                 ttfb_warning = config.get('TTFB_WARNING_MS', 500)
                 
@@ -3613,10 +4044,93 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             test_stopped = True
             print(f'\n  ⏹️  Test STOPPED by user')
             self.send_json({'success': True})
+
+        elif self.path == '/api/contribute':
+            self.handle_contribute_results()
         
         else:
             self.send_response(404)
             self.end_headers()
+
+    def handle_contribute_results(self):
+        """Submit completed test rows to the remote contribution API."""
+        global test_results
+
+        rows = build_export_rows(test_results)
+        if not rows:
+            self.send_json({'success': False, 'error': 'No completed results available to contribute'})
+            return
+
+        test_results['contribution'] = {
+            'status': 'submitting',
+            'submitted': 0,
+            'failed': 0,
+            'total': len(rows),
+            'errors': [],
+        }
+        add_log(f"Contribute started: submitting {len(rows)} row(s) to QoSMic API", 'info')
+
+        submitted = 0
+        failed = 0
+        errors = []
+
+        for index, row in enumerate(rows, 1):
+            contribution_row = build_contribution_row(row)
+            payload = json.dumps({'row': contribution_row}).encode('utf-8')
+            request = urllib.request.Request(
+                CONTRIBUTE_API_URL,
+                data=payload,
+                headers={
+                    'Content-Type': 'application/json',
+                    'Accept': 'application/json',
+                    'User-Agent': 'NOC-Tune/1.0'
+                },
+                method='POST'
+            )
+
+            try:
+                with urllib.request.urlopen(request, timeout=20) as response:
+                    response_text = response.read().decode('utf-8', errors='replace')
+                submitted += 1
+                add_log(
+                    f"Contribute row {index}/{len(rows)} OK: {row.get('target_name')} sample #{row.get('sample_num')}",
+                    'success'
+                )
+            except Exception as e:
+                failed += 1
+                response_text = ''
+                if hasattr(e, 'read'):
+                    try:
+                        response_text = e.read().decode('utf-8', errors='replace')
+                    except Exception:
+                        response_text = ''
+                error_suffix = f" | Response: {response_text}" if response_text else ''
+                error_message = f"Row {index} failed for {row.get('target_name')} sample #{row.get('sample_num')}: {e}{error_suffix}"
+                errors.append(error_message)
+                add_log(error_message, 'error')
+
+        status = 'success' if failed == 0 else ('partial' if submitted > 0 else 'error')
+        test_results['contribution'] = {
+            'status': status,
+            'submitted': submitted,
+            'failed': failed,
+            'total': len(rows),
+            'errors': errors,
+            'updated_at': datetime.now().isoformat(),
+        }
+
+        if failed == 0:
+            add_log(f"Contribute finished: {submitted}/{len(rows)} row(s) submitted", 'success')
+            self.send_json({'success': True, 'submitted': submitted, 'failed': failed, 'total': len(rows)})
+        else:
+            self.send_json({
+                'success': submitted > 0,
+                'submitted': submitted,
+                'failed': failed,
+                'total': len(rows),
+                'errors': errors,
+                'error': errors[0] if errors else 'Unknown contribution error'
+            })
     
     def send_json(self, data):
         self.send_response(200)

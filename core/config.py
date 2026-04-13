@@ -14,10 +14,13 @@ DEFAULT_CONFIG = {
     'SAMPLE_COUNT': 5,
     'DELAY_SECONDS': 2,
     'PING_DURATION': 10,
+    'AUTO_CONTRIBUTE': True,
     'SIGNAL_THRESHOLD_DBM': -70,
     'TTFB_GOOD_MS': 200,
     'TTFB_WARNING_MS': 500,
-    'ONT_DNS': ''
+    'ONT_DNS': '',
+    'BRAND': '',
+    'NO_INTERNET': ''
 }
 
 
@@ -46,8 +49,10 @@ def parse_config(config_path: Path) -> Dict[str, Any]:
                 elif key in ['SAMPLE_COUNT', 'DELAY_SECONDS', 'PING_DURATION', 
                            'SIGNAL_THRESHOLD_DBM', 'TTFB_GOOD_MS', 'TTFB_WARNING_MS']:
                     config[key] = int(value)
-                elif key == 'ONT_DNS':
-                    config['ONT_DNS'] = value
+                elif key == 'AUTO_CONTRIBUTE':
+                    config[key] = value.lower() in ['true', '1', 'yes', 'on']
+                elif key in ['ONT_DNS', 'BRAND', 'NO_INTERNET']:
+                    config[key] = value
     except Exception as e:
         print(f"Error parsing config: {e}")
     
@@ -71,6 +76,9 @@ def save_config(config: Dict[str, Any], config_path: Path) -> bool:
             f.write(f"SAMPLE_COUNT = {config.get('SAMPLE_COUNT', 5)}\n")
             f.write(f"DELAY_SECONDS = {config.get('DELAY_SECONDS', 2)}\n")
             f.write(f"PING_DURATION = {config.get('PING_DURATION', 10)}\n\n")
+
+            f.write("# Contribution\n")
+            f.write(f"AUTO_CONTRIBUTE = {'True' if config.get('AUTO_CONTRIBUTE', True) else 'False'}\n\n")
             
             f.write("# Thresholds\n")
             f.write(f"SIGNAL_THRESHOLD_DBM = {config.get('SIGNAL_THRESHOLD_DBM', -70)}\n")
@@ -78,7 +86,11 @@ def save_config(config: Dict[str, Any], config_path: Path) -> bool:
             f.write(f"TTFB_WARNING_MS = {config.get('TTFB_WARNING_MS', 500)}\n\n")
             
             f.write("# Optional: ONT DNS (fallback if auto-detect fails)\n")
-            f.write(f"ONT_DNS = {config.get('ONT_DNS', '')}\n")
+            f.write(f"ONT_DNS = {config.get('ONT_DNS', '')}\n\n")
+
+            f.write("# Optional: Contribution metadata\n")
+            f.write(f"BRAND = {config.get('BRAND', '')}\n")
+            f.write(f"NO_INTERNET = {config.get('NO_INTERNET', '')}\n")
         
         return True
     except Exception as e:
