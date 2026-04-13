@@ -1186,7 +1186,6 @@ HTML_TEMPLATE = """
             height: 150px;
             border-radius: 8px;
             overflow: hidden;
-            margin-top: 8px;
             background: rgba(255,255,255,0.02);
             position: relative;
         }
@@ -1203,6 +1202,22 @@ HTML_TEMPLATE = """
             justify-content: center;
             color: #666;
             font-size: 0.85em;
+        }
+        
+        /* Location 2-column layout */
+        .location-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+        }
+        .location-info {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+        .location-map {
+            display: flex;
+            flex-direction: column;
         }
         
         /* Results Summary */
@@ -1535,6 +1550,7 @@ HTML_TEMPLATE = """
         let isRunning = false;
         let isPaused = false;
         let pollInterval = null;
+        let lastMapCoords = null;  // Track map coordinates to prevent flickering
         
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -1915,7 +1931,7 @@ HTML_TEMPLATE = """
             }
             html += '</div>';
             
-            // Location section with map
+            // Location section with map (2-column layout)
             if (info.location) {
                 const locMethod = info.location.is_precise ? 'GPS (Browser)' : 'IP Geolocation';
                 const locClass = info.location.is_precise ? 'precise' : 'approximate';
@@ -1923,32 +1939,60 @@ HTML_TEMPLATE = """
                 
                 html += '<div class="network-section">';
                 html += '<div class="section-header">📍 Location <span class="loc-badge ' + locClass + '">' + locBadge + '</span></div>';
+                
+                // 2-column grid: info on left, map on right
+                html += '<div class="location-grid">';
+                
+                // Left column: location info
+                html += '<div class="location-info">';
                 html += '<div class="network-item"><label>City</label><div class="value">' + info.location.city + ', ' + (info.location.region || '') + ', ' + info.location.country + '</div></div>';
                 
                 if (info.location.lat && info.location.lon) {
                     const accuracy = info.location.accuracy ? ' (±' + Math.round(info.location.accuracy) + 'm)' : '';
                     html += '<div class="network-item"><label>Coordinates' + accuracy + '</label><div class="value">' + info.location.lat.toFixed(5) + ', ' + info.location.lon.toFixed(5) + '</div></div>';
-                    
-                    // Mini map using OpenStreetMap
-                    const lat = info.location.lat;
-                    const lon = info.location.lon;
-                    const zoom = info.location.is_precise ? 15 : 12;
-                    const mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=' + (lon-0.01) + '%2C' + (lat-0.01) + '%2C' + (lon+0.01) + '%2C' + (lat+0.01) + '&layer=mapnik&marker=' + lat + '%2C' + lon;
-                    
-                    html += '<div class="map-container">';
-                    html += '<iframe src="' + mapUrl + '" loading="lazy"></iframe>';
-                    html += '</div>';
-                } else {
-                    html += '<div class="map-container"><div class="map-placeholder">📍 Coordinates not available</div></div>';
                 }
                 
                 html += '<div class="network-item"><label>ISP</label><div class="value">' + (info.location.isp || 'N/A') + '</div></div>';
                 html += '<div class="network-item"><label>Public IP</label><div class="value">' + (info.location.ip || 'N/A') + '</div></div>';
                 html += '<div class="network-item"><label>Method</label><div class="value">' + locMethod + '</div></div>';
                 html += '</div>';
+                
+                // Right column: map
+                html += '<div class="location-map">';
+                if (info.location.lat && info.location.lon) {
+                    const lat = info.location.lat;
+                    const lon = info.location.lon;
+                    const coordsKey = lat.toFixed(5) + ',' + lon.toFixed(5);
+                    
+                    // Only update map if coordinates changed (prevent flickering)
+                    if (lastMapCoords !== coordsKey) {
+                        lastMapCoords = coordsKey;
+                        const mapUrl = 'https://www.openstreetmap.org/export/embed.html?bbox=' + (lon-0.01) + '%2C' + (lat-0.01) + '%2C' + (lon+0.01) + '%2C' + (lat+0.01) + '&layer=mapnik&marker=' + lat + '%2C' + lon;
+                        html += '<div class="map-container" id="map-container">';
+                        html += '<iframe src="' + mapUrl + '" loading="lazy"></iframe>';
+                        html += '</div>';
+                    } else {
+                        // Keep existing map
+                        html += '<div class="map-container" id="map-container-placeholder"></div>';
+                    }
+                } else {
+                    html += '<div class="map-container"><div class="map-placeholder">📍 Coordinates not available</div></div>';
+                }
+                html += '</div>';
+                
+                html += '</div>';  // Close location-grid
+                html += '</div>';  // Close network-section
             }
             
+            // Preserve existing map if we used placeholder
+            const existingMap = document.getElementById('map-container');
             grid.innerHTML = html || '<div class="network-item"><label>Status</label><div class="value">Detecting...</div></div>';
+            
+            // Restore map if placeholder was used
+            const placeholder = document.getElementById('map-container-placeholder');
+            if (placeholder && existingMap) {
+                placeholder.replaceWith(existingMap);
+            }
         }
         
         // Update results display

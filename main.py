@@ -98,6 +98,20 @@ def run_location():
     location_main()
 
 
+def get_local_ip():
+    """Get local IP address for network access."""
+    import socket
+    try:
+        # Connect to external address to get local IP (doesn't actually send data)
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        local_ip = s.getsockname()[0]
+        s.close()
+        return local_ip
+    except Exception:
+        return "127.0.0.1"
+
+
 def run_ui(port: int = 8766):
     """Run the TTFB Test UI."""
     # Import and call the main function from ttfb_test_ui
@@ -107,8 +121,14 @@ def run_ui(port: int = 8766):
     from ui import ttfb_test_ui
     ttfb_test_ui.PORT = port
     
+    local_ip = get_local_ip()
+    
     print(f"🚀 Starting NOC Tune TTFB Test UI on port {port}...")
-    print(f"   Open http://localhost:{port} in your browser")
+    print()
+    print(f"   📍 Local:   http://localhost:{port}")
+    print(f"   🌐 Network: http://{local_ip}:{port}")
+    print()
+    print("   💡 Other devices on the same network can access via the Network URL")
     print("   Press Ctrl+C to stop\n")
     
     # Call the main function

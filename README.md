@@ -4,6 +4,26 @@
 
 Tools untuk mengukur dan menganalisis kualitas jaringan secara komprehensif, dikembangkan berdasarkan metodologi troubleshooting TTFB.
 
+Made with ❤️ by [@basnugroho](https://github.com/basnugroho) · MIT License · [Contribute](https://github.com/basnugroho/noctune)
+
+---
+
+## 📸 Screenshots
+
+### Browser-based UI
+![TTFB Test UI](images/ui1.png)
+
+### Network Info & Map
+![Network Info](images/ui2.png)
+
+### TTFB Analysis
+![TTFB Analysis](images/ttfb.png)
+
+### BCQ Analysis
+![BCQ Analysis](images/bcq.png)
+
+---
+
 ## 📋 Daftar Fitur
 
 | Fase | Fitur | Status |
@@ -23,166 +43,121 @@ Berdasarkan analisis TTFB troubleshooting, tools ini membantu:
 - Menganalisis Connect/TCP jitter (target: < 50ms)
 - Validasi performa ke berbagai CDN (Google, Akamai, Amazon)
 
+---
+
 ## 🚀 Quick Start
 
-### Pilih sistem operasi Anda:
-
-<details>
-<summary><b>🍎 macOS / 🐧 Linux</b></summary>
-
-#### 1. Pastikan Python 3.8+ terinstall
+### Cara Tercepat (Browser UI)
 
 ```bash
-python3 --version
-```
-
-Jika belum terinstall:
-- **macOS**: `brew install python3`
-- **Ubuntu/Debian**: `sudo apt install python3 python3-pip python3-venv`
-- **Fedora**: `sudo dnf install python3 python3-pip`
-
-#### 2. Pastikan dig dan curl tersedia
-
-```bash
-dig -v
-curl --version
-```
-
-Jika belum:
-- **macOS**: `brew install bind curl` (biasanya sudah ada)
-- **Ubuntu/Debian**: `sudo apt install dnsutils curl`
-
-#### 3. Setup Virtual Environment
-
-```bash
-# Masuk ke direktori project
-cd noc_tune
+# Clone repository
+git clone https://github.com/basnugroho/noctune.git
+cd noctune
 
 # Buat virtual environment
-python3 -m venv venv
-
-# Aktivasi venv
-source venv/bin/activate
+python3 -m venv .venv
+source .venv/bin/activate  # Linux/macOS
+# atau: .venv\Scripts\activate  # Windows
 
 # Install dependencies
 pip install -r requirements.txt
+
+# Jalankan UI
+python main.py
 ```
 
-#### 4. Jalankan Jupyter Notebook
+Browser akan terbuka otomatis dengan tampilan:
+- 📡 Network Info (signal, band, DNS, lokasi + peta)
+- ⚙️ Configuration panel
+- 📊 Real-time test results
+- 📥 Download CSV/Report
+
+---
+
+## 🌐 Remote Access (Raspberry Pi / Server)
+
+NOC Tune dapat dijalankan di perangkat remote (seperti Raspberry Pi atau server) dan diakses dari device lain dalam satu jaringan.
+
+### Setup di Raspberry Pi / Server
 
 ```bash
-jupyter notebook notebooks/
-```
+# SSH ke Raspberry Pi
+ssh pi@192.168.1.100
 
-Buka file `ttfb_test.ipynb`
-
-</details>
-
-<details>
-<summary><b>🪟 Windows</b></summary>
-
-#### 1. Install Python (jika belum ada)
-
-1. **Download Python** dari [python.org/downloads](https://www.python.org/downloads/)
-   - Pilih versi **Python 3.10+** (rekomendasi: 3.11 atau 3.12)
-   - Download "Windows installer (64-bit)"
-
-2. **Jalankan installer**:
-   - ✅ **PENTING**: Centang **"Add Python to PATH"** di halaman pertama!
-   - Klik "Install Now"
-   - Tunggu hingga selesai
-
-3. **Verifikasi instalasi** - Buka Command Prompt (cmd) atau PowerShell:
-   ```cmd
-   python --version
-   pip --version
-   ```
-
-#### 2. Install Tools Tambahan (dig & curl)
-
-**curl**: Sudah include di Windows 10/11 terbaru. Cek dengan `curl --version`
-
-**dig**: Pilih salah satu opsi berikut:
-
-**Opsi A: Menggunakan Winget (Rekomendasi - Paling Mudah)**
-
-1. Buka **CMD/PowerShell** sebagai **Administrator**
-2. Ketik perintah:
-   ```cmd
-   winget install ISC.BIND
-   ```
-3. Tutup CMD dan buka kembali
-4. Verifikasi: `dig -v`
-
-**Opsi B: Menggunakan Chocolatey**
-
-1. Install Chocolatey (package manager untuk Windows):
-   - Buka **PowerShell sebagai Administrator**
-   - Jalankan:
-   ```powershell
-   Set-ExecutionPolicy Bypass -Scope Process -Force; [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072; iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
-   ```
-
-2. Install dig (BIND):
-   ```powershell
-   choco install bind-toolsonly -y
-   ```
-
-**Opsi C: Download Manual**
-- Download BIND dari [ISC BIND](https://www.isc.org/download/) atau gunakan `nslookup` sebagai alternatif
-
-#### 3. Setup Virtual Environment
-
-Buka **Command Prompt** atau **PowerShell**:
-
-```cmd
-# Masuk ke direktori project
-cd noc_tune
-
-# Buat virtual environment
-python -m venv venv
-
-# Aktivasi venv
-venv\Scripts\activate
-
-# Install dependencies
+# Clone dan setup
+git clone https://github.com/basnugroho/noctune.git
+cd noctune
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+
+# Jalankan server
+python main.py
 ```
 
-> **Note**: Jika muncul error "running scripts is disabled", jalankan PowerShell sebagai Administrator dan ketik:
-> ```powershell
-> Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
-> ```
+Output akan menampilkan:
+```
+🚀 Starting NOC Tune TTFB Test UI on port 8766...
 
-#### 4. Jalankan Jupyter Notebook
+   📍 Local:   http://localhost:8766
+   🌐 Network: http://192.168.1.100:8766
 
-```cmd
-jupyter notebook notebooks/
+   💡 Other devices on the same network can access via the Network URL
+   Press Ctrl+C to stop
 ```
 
-Buka file `ttfb_test.ipynb` di browser yang terbuka otomatis.
+### Akses dari Device Lain
 
-#### Troubleshooting Windows
+1. **Dari laptop/HP dalam satu WiFi**: Buka browser dan akses URL Network (contoh: `http://192.168.1.100:8766`)
+2. **Custom port**: `python main.py --port 8080`
 
-| Problem | Solution |
-|---------|----------|
-| `python` not recognized | Reinstall Python, pastikan centang "Add to PATH" |
-| `dig` not found | Install via Chocolatey atau gunakan `nslookup` |
-| Permission denied | Jalankan terminal sebagai Administrator |
-| SSL Certificate error | `pip install --trusted-host pypi.org --trusted-host files.pythonhosted.org -r requirements.txt` |
+### Use Cases
 
-</details>
+| Skenario | Device Runner | Device Controller |
+|----------|---------------|-------------------|
+| Test WiFi di rumah | Raspberry Pi di pojok ruangan | Laptop/HP |
+| Test kantor | Server Linux | Browser dari mana saja |
+| Test multiple lokasi | Raspberry Pi di tiap lantai | Dashboard central |
+
+### Tips untuk Raspberry Pi
+
+```bash
+# Install dependencies di Raspberry Pi OS
+sudo apt update
+sudo apt install python3 python3-pip python3-venv curl
+
+# Jalankan di background
+nohup python main.py > noctune.log 2>&1 &
+
+# Cek log
+tail -f noctune.log
+
+# Stop server
+pkill -f "python main.py"
+```
+
+---
 
 ## 📁 Struktur Project
 
 ```
 noc_tune/
+├── main.py                         # 🚀 Entry point utama
 ├── README.md                       # Dokumentasi project
 ├── requirements.txt                # Dependencies Python
 ├── .gitignore                      # Git ignore rules
-├── venv/                           # Virtual environment (gitignore)
+├── core/                           # Core modules
+│   ├── __init__.py
+│   ├── config.py                   # Configuration management
+│   ├── network.py                  # Network detection
+│   └── ttfb.py                     # TTFB measurement
+├── ui/                             # UI modules
+│   ├── __init__.py
+│   ├── ttfb_test_ui.py             # Browser-based TTFB UI
+│   └── get_location.py             # GPS location via browser
+├── images/                         # Screenshots
 ├── notebooks/                      # 📓 Jupyter notebooks
-│   ├── ttfb_test.ipynb             # Notebook TTFB Testing (adaptive)
+│   ├── ttfb_test.ipynb             # Notebook TTFB Testing
 │   ├── config.txt                  # Konfigurasi test
 │   └── results/                    # Hasil test per session
 │       └── session_{signal}_{band}_{dns}_{timestamp}/
@@ -191,18 +166,45 @@ noc_tune/
 │           ├── summary_*.csv
 │           └── analysis_chart_*.png
 └── docs/                           # Dokumentasi tambahan
-    └── TTFB_troubleshooting.pdf    # Referensi metodologi
 ```
 
-> **📓 Notebooks terletak di folder `notebooks/`**
+---
 
-## 📊 Fase 1: TTFB Testing
+## 🖥️ Command Line Options
 
-### ✨ Fitur Auto-Deteksi
-Notebook secara **otomatis** mendeteksi:
-- 📶 **Kekuatan sinyal WiFi** (dBm) → dikategorikan Good/Bad
+```bash
+python main.py                  # Jalankan UI (default)
+python main.py --port 8080      # Custom port
+python main.py --location       # Dapatkan GPS presisi via browser
+python main.py --check          # Cek prerequisites saja
+python main.py --version        # Tampilkan versi
+```
+
+---
+
+## ✨ Fitur Browser UI
+
+### Auto-Deteksi
+- 📶 **Kekuatan sinyal WiFi** (RSSI dBm) dengan signal bar berwarna
 - 📻 **Band WiFi** (2.4GHz / 5GHz) dari channel number
 - 🌐 **DNS Server** yang sedang digunakan
+- 📍 **Lokasi & ISP** via IP Geolocation + Browser GPS
+
+### Control
+- ▶️ **Run Test** - Mulai test TTFB
+- ⏸️ **Pause** - Pause/resume test
+- ⏹️ **Stop** - Stop test
+- 🔄 **Restart** - Restart test
+
+### Output
+- 📊 Real-time results table
+- 📈 Summary statistics (Mean, Good, Warning, Poor)
+- 📥 Download CSV dengan data lengkap
+- 📄 Download Report dengan analisis
+
+---
+
+## 📊 Fase 1: TTFB Testing
 
 ### 📁 Format Output Adaptif
 Nama file dan folder otomatis menyesuaikan kondisi:
@@ -217,11 +219,6 @@ results/session_good_signal_5G_8-8-8-8_20260413_123456/
 ```
 
 ### 📝 Config File (config.txt)
-Config hanya untuk:
-- Target URL yang akan ditest
-- Threshold kategorisasi (signal dBm, TTFB ms)
-- ONT DNS (referensi jika auto-detect gagal)
-
 ```txt
 TARGETS = https://www.instagram.com, https://example.com
 SAMPLE_COUNT = 10
@@ -231,96 +228,120 @@ TTFB_WARNING_MS = 500
 ONT_DNS = 8.8.8.8
 ```
 
-### 🚀 Cara Penggunaan
-1. Edit `config.txt` jika diperlukan
-2. Buka `ttfb_test.ipynb`
-3. Klik **Run All** dan tunggu hasil
-4. Report adaptif akan muncul di folder `results/`
-
-### Contoh Command yang Dijalankan
-```bash
-# Ping test
-ping -c 60 8.8.8.8
-
-# TTFB measurement dengan curl
-curl -o /dev/null -s -w "Lookup: %{time_namelookup}s\nConnect: %{time_connect}s\nAppConnect: %{time_appconnect}s\nTTFB: %{time_starttransfer}s\nTotal: %{time_total}s\n" https://www.instagram.com
-```
-
 ### Parameter Testing
 | Parameter | Default | Deskripsi |
 |-----------|---------|-----------|
 | `SAMPLE_COUNT` | 10 | Jumlah pengulangan test per target |
-| `DELAY_SECONDS` | 30 | Jeda antar test (detik) |
-| `PING_DURATION` | 60 | Durasi ping test (detik) |
-| `SIGNAL_THRESHOLD_DBM` | -65 | Threshold good/bad signal |
+| `DELAY_SECONDS` | 2 | Jeda antar test (detik) |
+| `PING_DURATION` | 10 | Durasi ping test (detik) |
+| `SIGNAL_THRESHOLD_DBM` | -70 | Threshold good/bad signal |
 | `TTFB_GOOD_MS` | 200 | TTFB dianggap baik jika < nilai ini |
 | `TTFB_WARNING_MS` | 500 | TTFB dianggap warning jika < nilai ini |
 
-### Metrik TTFB yang Diukur
-- `time_namelookup`: DNS resolution time
-- `time_connect`: TCP 3-way handshake completion
-- `time_appconnect`: SSL/TLS negotiation completion  
-- `time_starttransfer`: **TTFB** - waktu hingga byte pertama diterima
-- `time_total`: Total transfer time
-- `server_response`: TTFB - AppConnect (waktu respons server)
+---
 
 ## 📈 Interpretasi Hasil
 
 ### TTFB Thresholds
 | Range | Status | Aksi |
 |-------|--------|------|
-| < 600ms | 🟢 Good | Optimal |
-| 600-800ms | 🟡 Needs Improvement | Monitor |
-| > 800ms | 🔴 Poor | Troubleshoot |
+| < 200ms | 🟢 Good | Optimal |
+| 200-500ms | 🟡 Warning | Monitor |
+| > 500ms | 🔴 Poor | Troubleshoot |
+
+### Signal Strength
+| RSSI | Status | Color |
+|------|--------|-------|
+| >= -50 dBm | Excellent | 🟢 Green |
+| -50 to -60 | Good | 🟢 Light Green |
+| -60 to -70 | Fair | 🟡 Yellow |
+| -70 to -80 | Weak | 🟠 Orange |
+| < -80 dBm | Poor | 🔴 Red |
 
 ### Root Cause Analysis
 1. **DNS lambat** (Lookup > 30ms): Ganti ke public DNS (8.8.8.8 / 1.1.1.1)
 2. **WiFi jitter** (Connect range besar): Pindah ke 5GHz, optimasi channel
 3. **Path/CDN issue** (Server response tinggi): Cek peering, traceroute
 
-## 🔧 Troubleshooting Steps
+---
 
-1. **Stabilkan DNS** - Ganti resolver, target Lookup < 30ms
-2. **Ukur first-mile** - Ping 8.8.8.8, target 0% loss & jitter kecil
-3. **Pisahkan 2.4G vs 5G** - A/B test Wi-Fi band
-4. **Cek Connect jitter** - Target < 50ms dengan range sempit
-5. **Analisis post-AppConnect** - Hitung TTFB - AppConnect
-6. **Optimasi WiFi** - Channel manual, matikan Smart Connect
-7. **Eskalasi** - pcap dan traceroute/mtr jika masih bermasalah
+## 🔧 Troubleshooting
 
-## 📝 Output CSV Format
-
-```csv
-timestamp,dns_server,endpoint,lookup_ms,connect_ms,appconnect_ms,ttfb_ms,total_ms,server_response_ms,status
-2026-04-10 19:30:00,8.8.8.8,www.instagram.com,21,35,85,384,520,299,good
+### macOS: SSID/RSSI tidak terdeteksi
+```bash
+# Install pyobjc untuk deteksi WiFi yang lebih baik
+pip install pyobjc-framework-CoreWLAN
 ```
+
+### Windows: dig tidak ditemukan
+```cmd
+# Install via winget
+winget install ISC.BIND
+```
+
+### Linux: Permission denied
+```bash
+# Pastikan curl terinstall
+sudo apt install curl dnsutils
+```
+
+---
 
 ## 🧪 Requirements
 
-### Software
-- **Python 3.8+** (rekomendasi: 3.10 atau lebih baru)
-- **pip** (biasanya sudah include dengan Python)
-- **dig** (DNS lookup tool) - atau `nslookup` di Windows
-- **curl** (HTTP client)
+- Python 3.8+
+- curl (untuk TTFB measurement)
+- Browser modern (untuk UI)
 
-### Sistem Operasi
-- ✅ macOS
-- ✅ Linux (Ubuntu, Debian, Fedora, dll)
-- ✅ Windows 10/11
+### Python Packages
+```
+pandas
+numpy
+matplotlib
+seaborn
+tqdm
+requests
+```
 
-### Koneksi
-- Koneksi internet aktif untuk pengujian
+---
 
-## 📚 Referensi
+## 🛠️ Development
 
-- [OpenSignal Methodology](https://www.opensignal.com/)
+### Jupyter Notebook
+Untuk analisis manual, gunakan notebook:
+```bash
+cd notebooks
+jupyter notebook ttfb_test.ipynb
+```
+
+### GPS Presisi
+Untuk lokasi GPS yang lebih akurat (±10m vs ±1km):
+```bash
+python main.py --location
+```
+Browser akan meminta izin lokasi.
+
+---
+
+## 📝 License
+
+MIT License - see [LICENSE](LICENSE) for details.
+
+---
 
 ## 🤝 Contributing
 
-Kontribusi sangat diterima! Silakan buat issue atau pull request.
+Contributions welcome! Please feel free to submit a Pull Request.
 
-## 📄 License
-
-MIT License
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/AmazingFeature`)
+3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
+4. Push to the branch (`git push origin feature/AmazingFeature`)
+5. Open a Pull Request
 
 ---
+
+## 📞 Support
+
+- Issues: [GitHub Issues](https://github.com/basnugroho/noctune/issues)
+- Twitter: [@basnugroho](https://twitter.com/basnugroho)
