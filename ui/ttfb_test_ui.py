@@ -21,6 +21,7 @@ import json
 import os
 import sys
 import subprocess
+import signal
 import threading
 import time
 import re
@@ -35,6 +36,58 @@ import urllib.request
 PORT = 8766
 CONFIG_FILE = Path(__file__).parent.parent / "notebooks" / "config.txt"
 RESULTS_DIR = Path(__file__).parent.parent / "notebooks" / "results"
+PRECISE_LOCATION_FILE = Path(__file__).parent.parent / "notebooks" / "precise_location.json"
+
+
+def sanitize_filename_part(value: str, fallback: str = "Unknown") -> str:
+    """Convert arbitrary text to a safe filename fragment."""
+    text = (value or fallback).strip()
+    text = re.sub(r'[^A-Za-z0-9._-]+', '-', text)
+    text = re.sub(r'-+', '-', text).strip('-._')
+    return text or fallback
+
+
+def reverse_geocode_coordinates(lat, lon) -> dict:
+    """Resolve coordinates into city/region/country when possible."""
+    if lat is None or lon is None:
+        return {}
+
+    try:
+        rgeo_url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&zoom=10"
+        rgeo_req = urllib.request.Request(rgeo_url, headers={'User-Agent': 'NOC-Tune/1.0'})
+        with urllib.request.urlopen(rgeo_req, timeout=5) as rgeo_resp:
+            rgeo_data = json.loads(rgeo_resp.read().decode())
+            addr = rgeo_data.get('address', {})
+            return {
+                'city': addr.get('city') or addr.get('town') or addr.get('municipality') or addr.get('county'),
+                'region': addr.get('state') or addr.get('region'),
+                'country': addr.get('country')
+            }
+    except Exception:
+        return {}
+
+
+def load_precise_location(max_age_hours: int = 24) -> dict | None:
+    """Load recent browser geolocation data from disk."""
+    if not PRECISE_LOCATION_FILE.exists():
+        return None
+
+    try:
+        from datetime import timedelta
+        with open(PRECISE_LOCATION_FILE, 'r') as f:
+            precise_data = json.load(f)
+
+        saved_at = precise_data.get('saved_at')
+        if not saved_at:
+            return None
+
+        saved_time = datetime.fromisoformat(saved_at.replace('Z', '+00:00'))
+        if datetime.now().astimezone() - saved_time >= timedelta(hours=max_age_hours):
+            return None
+
+        return precise_data
+    except Exception:
+        return None
 
 # Global state
 test_queue = queue.Queue()
@@ -127,7 +180,7 @@ def check_prerequisites() -> dict:
         'ping': {'status': 'checking', 'message': '', 'required': True},
         'network': {'status': 'checking', 'message': '', 'required': True},
         'wifi': {'status': 'checking', 'message': '', 'required': False},
-        'python_packages': {'status': 'checking', 'message': '', 'required': True}
+        'python_packages': {'status': 'checking', 'message': '', 'required': False}
     }
     
     # Check curl
@@ -226,12 +279,12 @@ def check_prerequisites() -> dict:
     
     if missing_packages:
         results['python_packages'] = {
-            'status': 'error', 
-            'message': f'Missing: {", ".join(missing_packages)}. Run: pip install {" ".join(missing_packages)}',
-            'required': True
+            'status': 'warning',
+            'message': f'Optional for notebook/report workflows: missing {", ".join(missing_packages)}. Run: pip install {" ".join(missing_packages)}',
+            'required': False
         }
     else:
-        results['python_packages'] = {'status': 'ok', 'message': 'All required packages installed', 'required': True}
+        results['python_packages'] = {'status': 'ok', 'message': 'Optional analysis packages installed', 'required': False}
     
     return results
 
@@ -604,51 +657,47 @@ def detect_network_info() -> dict:
     except:
         pass
     
-    # Check for precise location from browser-based script
-    precise_location_file = Path(__file__).parent / "notebooks" / "precise_location.json"
-    if precise_location_file.exists():
-        try:
-            from datetime import timedelta
-            with open(precise_location_file, 'r') as f:
-                precise_data = json.load(f)
-            
-            # Check if data is recent (within last 24 hours)
-            saved_at = precise_data.get('saved_at')
-            if saved_at:
-                saved_time = datetime.fromisoformat(saved_at.replace('Z', '+00:00'))
-                if datetime.now().astimezone() - saved_time < timedelta(hours=24):
-                    # Update location with precise coordinates
-                    if info.get('location') is None:
-                        info['location'] = {}
-                    
-                    info['location']['lat'] = precise_data.get('latitude')
-                    info['location']['lon'] = precise_data.get('longitude')
-                    info['location']['accuracy'] = precise_data.get('accuracy')
-                    info['location']['is_precise'] = True
-                    info['location']['method'] = 'GPS (Browser)'
-                    
-                    # Reverse geocode to get city from precise coordinates
-                    try:
-                        lat = precise_data.get('latitude')
-                        lon = precise_data.get('longitude')
-                        rgeo_url = f"https://nominatim.openstreetmap.org/reverse?lat={lat}&lon={lon}&format=json&zoom=10"
-                        rgeo_req = urllib.request.Request(rgeo_url, headers={'User-Agent': 'NOC-Tune/1.0'})
-                        with urllib.request.urlopen(rgeo_req, timeout=5) as rgeo_resp:
-                            rgeo_data = json.loads(rgeo_resp.read().decode())
-                            addr = rgeo_data.get('address', {})
-                            city = addr.get('city') or addr.get('town') or addr.get('municipality') or addr.get('county')
-                            if city:
-                                info['location']['city'] = city
-                            region = addr.get('state')
-                            if region:
-                                info['location']['region'] = region
-                            country = addr.get('country')
-                            if country:
-                                info['location']['country'] = country
-                    except:
-                        pass  # Keep IP-based city if reverse geocode fails
-        except:
-            pass
+    # Overlay precise browser location when available
+    precise_data = load_precise_location()
+    if precise_data:
+        if info.get('location') is None:
+            info['location'] = {}
+
+        info['location']['lat'] = precise_data.get('latitude')
+        info['location']['lon'] = precise_data.get('longitude')
+        info['location']['accuracy'] = precise_data.get('accuracy')
+        info['location']['altitude'] = precise_data.get('altitude')
+        info['location']['altitude_accuracy'] = precise_data.get('altitudeAccuracy')
+        info['location']['heading'] = precise_data.get('heading')
+        info['location']['speed'] = precise_data.get('speed')
+        info['location']['browser_timestamp'] = precise_data.get('timestamp')
+        info['location']['saved_at'] = precise_data.get('saved_at')
+        info['location']['source'] = precise_data.get('source') or 'browser_geolocation'
+        info['location']['is_precise'] = True
+        info['location']['method'] = precise_data.get('method') or 'GPS (Browser)'
+
+        has_precise_labels = False
+        if precise_data.get('city'):
+            info['location']['city'] = precise_data.get('city')
+            has_precise_labels = True
+        if precise_data.get('region'):
+            info['location']['region'] = precise_data.get('region')
+            has_precise_labels = True
+        if precise_data.get('country'):
+            info['location']['country'] = precise_data.get('country')
+            has_precise_labels = True
+
+        if not has_precise_labels:
+            info['location']['city'] = None
+            info['location']['region'] = None
+            info['location']['country'] = None
+            geocoded = reverse_geocode_coordinates(precise_data.get('latitude'), precise_data.get('longitude'))
+            if geocoded.get('city'):
+                info['location']['city'] = geocoded['city']
+            if geocoded.get('region'):
+                info['location']['region'] = geocoded['region']
+            if geocoded.get('country'):
+                info['location']['country'] = geocoded['country']
     
     return info
 
@@ -1652,12 +1701,25 @@ HTML_TEMPLATE = """
         /* Empty state */
         .empty-state {
             text-align: center;
-            padding: 60px 20px;
-            color: #666;
+            padding: 36px 24px;
+            color: #7c7c94;
+            background: rgba(255,255,255,0.03);
+            border: 1px dashed rgba(255,255,255,0.08);
+            border-radius: 12px;
+            margin-bottom: 20px;
         }
         .empty-state-icon {
             font-size: 3em;
             margin-bottom: 16px;
+        }
+        .empty-state h3 {
+            color: #f1f3ff;
+            font-size: 1.05em;
+            margin-bottom: 8px;
+        }
+        .empty-state p {
+            margin: 0;
+            line-height: 1.5;
         }
         
         /* Scrollbar */
@@ -1780,6 +1842,88 @@ HTML_TEMPLATE = """
         
         <!-- Results Panel -->
         <div class="results-panel">
+            <div id="empty-state" class="empty-state">
+                <div class="empty-state-icon">📊</div>
+                <h3>Belum ada hasil tes</h3>
+                <p>Results dan Charts akan muncul di sini setelah test dijalankan.</p>
+            </div>
+
+            <div id="results-section" style="display: none;">
+                <div class="panel-title">📊 Results</div>
+
+                <!-- Charts Section -->
+                <div id="charts-section" style="display: none; margin-top: 12px;">
+                    <div class="panel-title">📈 Charts</div>
+                    <div class="charts-grid">
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Distribution by Target</div>
+                            <canvas id="chart-boxplot" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">Mean TTFB Comparison</div>
+                            <canvas id="chart-bar" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Over Time</div>
+                            <canvas id="chart-line" width="400" height="280"></canvas>
+                        </div>
+                        <div class="chart-card">
+                            <div class="chart-title">TTFB Status Distribution</div>
+                            <canvas id="chart-pie" width="400" height="280"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-header" id="results-list-header" onclick="toggleResultsList()">
+                    <div class="panel-title" style="margin-bottom: 0;">📋 Results List</div>
+                    <span class="collapse-icon">▼</span>
+                </div>
+                <div class="collapsible-content" id="results-list-content">
+                    <div class="summary-cards" id="summary-cards">
+                        <!-- Filled by JS -->
+                    </div>
+
+                    <div style="max-height: 400px; overflow-y: auto;">
+                        <table class="results-table results-table-expanded">
+                            <thead>
+                                <tr>
+                                    <th>Time</th>
+                                    <th>Target</th>
+                                    <th>#</th>
+                                    <th>TTFB</th>
+                                    <th>RSSI</th>
+                                    <th>Band</th>
+                                    <th>DNS</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody id="results-tbody">
+                                <!-- Filled by JS -->
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div id="download-section" style="display: none; margin-top: 16px;">
+                        <div class="btn-group">
+                            <button class="btn btn-success" onclick="downloadCSV()" id="download-csv-btn">📥 Download CSV</button>
+                            <button class="btn btn-primary" onclick="downloadReport()" id="download-report-btn">📄 Download Report</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <div id="test-progress" style="display: none;">
+                <div class="panel-title">⏳ Test Progress</div>
+                <div class="progress-details">
+                    <span id="progress-count">0 / 0</span>
+                    <span id="progress-percent">0%</span>
+                    <span id="progress-eta">ETA: --</span>
+                </div>
+                <div class="progress-bar">
+                    <div class="fill" id="progress-fill" style="width: 0%"></div>
+                </div>
+            </div>
+
             <div id="network-info" style="display: none;">
                 <div class="panel-title">📡 Network Info</div>
                 <div class="network-card">
@@ -1803,81 +1947,6 @@ HTML_TEMPLATE = """
                 <div class="prereq-list" id="prereq-list">
                     <!-- Filled by JS -->
                 </div>
-            </div>
-            
-            <div id="results-section" style="display: none;">
-                <div class="panel-title">📊 Results</div>
-                
-                <div class="summary-cards" id="summary-cards">
-                    <!-- Filled by JS -->
-                </div>
-                
-                <div style="max-height: 400px; overflow-y: auto;">
-                    <table class="results-table results-table-expanded">
-                        <thead>
-                            <tr>
-                                <th>Time</th>
-                                <th>Target</th>
-                                <th>#</th>
-                                <th>TTFB</th>
-                                <th>RSSI</th>
-                                <th>Band</th>
-                                <th>DNS</th>
-                                <th>Status</th>
-                            </tr>
-                        </thead>
-                        <tbody id="results-tbody">
-                            <!-- Filled by JS -->
-                        </tbody>
-                    </table>
-                </div>
-                
-                <div id="download-section" style="display: none; margin-top: 16px;">
-                    <div class="btn-group">
-                        <button class="btn btn-success" onclick="downloadCSV()" id="download-csv-btn">📥 Download CSV</button>
-                        <button class="btn btn-primary" onclick="downloadReport()" id="download-report-btn">📄 Download Report</button>
-                    </div>
-                </div>
-                
-                <!-- Charts Section -->
-                <div id="charts-section" style="display: none; margin-top: 20px;">
-                    <div class="panel-title">📈 Charts</div>
-                    <div class="charts-grid">
-                        <div class="chart-card">
-                            <div class="chart-title">TTFB Distribution by Target</div>
-                            <canvas id="chart-boxplot" width="400" height="280"></canvas>
-                        </div>
-                        <div class="chart-card">
-                            <div class="chart-title">Mean TTFB Comparison</div>
-                            <canvas id="chart-bar" width="400" height="280"></canvas>
-                        </div>
-                        <div class="chart-card">
-                            <div class="chart-title">TTFB Over Time</div>
-                            <canvas id="chart-line" width="400" height="280"></canvas>
-                        </div>
-                        <div class="chart-card">
-                            <div class="chart-title">TTFB Status Distribution</div>
-                            <canvas id="chart-pie" width="400" height="280"></canvas>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            
-            <div id="test-progress" style="display: none;">
-                <div class="panel-title">⏳ Test Progress</div>
-                <div class="progress-details">
-                    <span id="progress-count">0 / 0</span>
-                    <span id="progress-percent">0%</span>
-                    <span id="progress-eta">ETA: --</span>
-                </div>
-                <div class="progress-bar">
-                    <div class="fill" id="progress-fill" style="width: 0%"></div>
-                </div>
-            </div>
-            
-            <div id="empty-state" class="empty-state">
-                <div class="empty-state-icon">🚀</div>
-                <p>Configure your test and click "Run Test" to begin</p>
             </div>
         </div>
         
@@ -1948,6 +2017,32 @@ HTML_TEMPLATE = """
                     } catch (e) {
                         console.error('Reverse geocode error:', e);
                     }
+
+                    try {
+                        await fetch('/api/location', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                latitude: lat,
+                                longitude: lon,
+                                accuracy: accuracy,
+                                altitude: position.coords.altitude,
+                                altitudeAccuracy: position.coords.altitudeAccuracy,
+                                heading: position.coords.heading,
+                                speed: position.coords.speed,
+                                timestamp: new Date(position.timestamp).toISOString(),
+                                method: 'Browser Geolocation API',
+                                highAccuracy: true,
+                                source: 'browser_geolocation',
+                                city: browserLocation.city || null,
+                                region: browserLocation.region || null,
+                                country: browserLocation.country || null
+                            })
+                        });
+                        await loadNetworkInfo();
+                    } catch (e) {
+                        console.error('Failed to persist browser location:', e);
+                    }
                     
                     // Re-render with precise location
                     if (cachedNetworkInfo) {
@@ -2017,6 +2112,13 @@ HTML_TEMPLATE = """
         function togglePrereqs() {
             const header = document.getElementById('prereq-header');
             const content = document.getElementById('prereq-content');
+            header.classList.toggle('collapsed');
+            content.classList.toggle('collapsed');
+        }
+
+        function toggleResultsList() {
+            const header = document.getElementById('results-list-header');
+            const content = document.getElementById('results-list-content');
             header.classList.toggle('collapsed');
             content.classList.toggle('collapsed');
         }
@@ -2506,10 +2608,12 @@ HTML_TEMPLATE = """
         // Update results display
         function updateResults(status) {
             const resultsSection = document.getElementById('results-section');
+            const emptyState = document.getElementById('empty-state');
             const summaryCards = document.getElementById('summary-cards');
             const tbody = document.getElementById('results-tbody');
             const downloadSection = document.getElementById('download-section');
             
+            emptyState.style.display = 'none';
             resultsSection.style.display = 'block';
             
             // Update summary
@@ -3044,6 +3148,9 @@ HTML_TEMPLATE = """
             const statusBadge = document.getElementById('status-badge');
             statusBadge.textContent = isReady ? 'Ready' : 'Not Ready';
             statusBadge.className = 'status-badge ' + (isReady ? 'ready' : 'not-ready');
+
+            const hasResults = document.getElementById('results-tbody').children.length > 0;
+            document.getElementById('empty-state').style.display = hasResults ? 'none' : 'block';
         }
         
         // Add log entry
@@ -3158,8 +3265,9 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             summary = test_results.get('summary', {})
             band = (network_info.get('wifi_band') or 'Unknown').replace('.', '_').replace('GHz', 'G')
             dns = (network_info.get('dns_primary') or 'UnknownDNS').replace('.', '-')
+            city = sanitize_filename_part(location.get('city'), 'UnknownCity')
             
-            filename = f"ttfb_results_{band}_{dns}_{session_id}.csv"
+            filename = f"ttfb_results_{city}_{band}_{dns}_{session_id}.csv"
             
             # Comprehensive field list - ALL available data
             fieldnames = [
@@ -3180,6 +3288,9 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                 # Location info
                 'location_city', 'location_region', 'location_country',
                 'location_lat', 'location_lon', 'location_accuracy',
+                'location_altitude', 'location_altitude_accuracy',
+                'location_heading', 'location_speed',
+                'location_browser_timestamp', 'location_saved_at', 'location_source',
                 'location_method', 'location_is_precise',
                 'isp', 'public_ip',
                 # Config thresholds
@@ -3237,6 +3348,13 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                     row['location_lat'] = location.get('lat', '')
                     row['location_lon'] = location.get('lon', '')
                     row['location_accuracy'] = location.get('accuracy', '')
+                    row['location_altitude'] = location.get('altitude', '')
+                    row['location_altitude_accuracy'] = location.get('altitude_accuracy', '')
+                    row['location_heading'] = location.get('heading', '')
+                    row['location_speed'] = location.get('speed', '')
+                    row['location_browser_timestamp'] = location.get('browser_timestamp', '')
+                    row['location_saved_at'] = location.get('saved_at', '')
+                    row['location_source'] = location.get('source', '')
                     row['location_method'] = location.get('method', '')
                     row['location_is_precise'] = location.get('is_precise', '')
                     row['isp'] = location.get('isp', '')
@@ -3287,10 +3405,12 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             # Generate filename
             session_id = test_results.get('session_id', datetime.now().strftime('%Y%m%d_%H%M%S'))
             network_info = test_results.get('network_info', {})
+            location = network_info.get('location', {}) or {}
             band = (network_info.get('wifi_band') or 'Unknown').replace('.', '_').replace('GHz', 'G')
             dns = (network_info.get('dns_primary') or 'UnknownDNS').replace('.', '-')
+            city = sanitize_filename_part(location.get('city'), 'UnknownCity')
             
-            filename = f"ttfb_report_{band}_{dns}_{session_id}.txt"
+            filename = f"ttfb_report_{city}_{band}_{dns}_{session_id}.txt"
             
             # Generate report content
             lines = []
@@ -3326,7 +3446,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             lines.append("")
             
             # Location
-            loc = network_info.get('location', {})
+            loc = location
             if loc:
                 lines.append("-" * 50)
                 lines.append("📍 LOCATION")
@@ -3335,9 +3455,19 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                 if loc.get('lat') and loc.get('lon'):
                     accuracy = f" (±{loc['accuracy']:.0f}m)" if loc.get('accuracy') else ""
                     lines.append(f"📍 Coordinates: {loc['lat']}, {loc['lon']}{accuracy}")
+                if loc.get('altitude') is not None:
+                    lines.append(f"⛰️ Altitude: {loc.get('altitude')} m")
+                if loc.get('heading') is not None:
+                    lines.append(f"🧭 Heading: {loc.get('heading')}")
+                if loc.get('speed') is not None:
+                    lines.append(f"🏃 Speed: {loc.get('speed')}")
                 lines.append(f"🏢 ISP: {loc.get('isp', 'N/A')}")
                 lines.append(f"🌐 Public IP: {loc.get('ip', 'N/A')}")
                 lines.append(f"📡 Method: {loc.get('method', 'N/A')}")
+                if loc.get('browser_timestamp'):
+                    lines.append(f"🕒 Browser Timestamp: {loc.get('browser_timestamp')}")
+                if loc.get('saved_at'):
+                    lines.append(f"💾 Saved At: {loc.get('saved_at')}")
                 lines.append("")
             
             # Results summary
@@ -3427,6 +3557,32 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({'success': success})
             except Exception as e:
                 self.send_json({'success': False, 'error': str(e)})
+
+        elif self.path == '/api/location':
+            try:
+                location_data = json.loads(post_data) if post_data else {}
+
+                if location_data.get('latitude') is None or location_data.get('longitude') is None:
+                    self.send_json({'success': False, 'error': 'latitude and longitude are required'})
+                    return
+
+                if not location_data.get('city') or not location_data.get('region') or not location_data.get('country'):
+                    geocoded = reverse_geocode_coordinates(location_data.get('latitude'), location_data.get('longitude'))
+                    if geocoded.get('city') and not location_data.get('city'):
+                        location_data['city'] = geocoded['city']
+                    if geocoded.get('region') and not location_data.get('region'):
+                        location_data['region'] = geocoded['region']
+                    if geocoded.get('country') and not location_data.get('country'):
+                        location_data['country'] = geocoded['country']
+
+                location_data['saved_at'] = datetime.now().astimezone().isoformat()
+                PRECISE_LOCATION_FILE.parent.mkdir(parents=True, exist_ok=True)
+                with open(PRECISE_LOCATION_FILE, 'w') as f:
+                    json.dump(location_data, f, indent=2)
+
+                self.send_json({'success': True, 'location': location_data})
+            except Exception as e:
+                self.send_json({'success': False, 'error': str(e)})
                 
         elif self.path == '/api/test/start':
             if test_running:
@@ -3469,6 +3625,79 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode())
 
 
+def cleanup_existing_server(port: int) -> list[int]:
+    """Best-effort cleanup for any stale server already listening on the port."""
+    current_pid = os.getpid()
+    stale_pids = []
+
+    try:
+        if platform.system() == 'Windows':
+            proc = subprocess.run(
+                ['netstat', '-ano'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            for line in proc.stdout.splitlines():
+                if f':{port} ' not in line or 'LISTENING' not in line.upper():
+                    continue
+                parts = line.split()
+                if parts:
+                    try:
+                        pid = int(parts[-1])
+                        if pid != current_pid:
+                            stale_pids.append(pid)
+                    except ValueError:
+                        continue
+        else:
+            proc = subprocess.run(
+                ['lsof', '-t', f'-iTCP:{port}', '-sTCP:LISTEN'],
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            for line in proc.stdout.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    pid = int(line)
+                except ValueError:
+                    continue
+                if pid != current_pid:
+                    stale_pids.append(pid)
+    except Exception:
+        return []
+
+    stale_pids = sorted(set(stale_pids))
+    if not stale_pids:
+        return []
+
+    for pid in stale_pids:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            pass
+
+    time.sleep(0.5)
+
+    for pid in stale_pids:
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            continue
+        except Exception:
+            continue
+
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+
+    time.sleep(0.2)
+    return stale_pids
+
+
 def main():
     print("=" * 60)
     print("🔧 NOC Tune - TTFB Test UI")
@@ -3477,11 +3706,31 @@ def main():
     
     # Ensure results directory exists
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    killed_pids = cleanup_existing_server(PORT)
+    if killed_pids:
+        print(f"🧹 Freed port {PORT} by stopping existing process(es): {', '.join(str(pid) for pid in killed_pids)}")
+        print()
     
     # Start server with SO_REUSEADDR
     class ReusableTCPServer(socketserver.TCPServer):
         allow_reuse_address = True
-    with ReusableTCPServer(("", PORT), TTFBHandler) as httpd:
+
+    try:
+        httpd = ReusableTCPServer(("", PORT), TTFBHandler)
+    except OSError as e:
+        if getattr(e, 'errno', None) == 48:
+            killed_pids = cleanup_existing_server(PORT)
+            if killed_pids:
+                print(f"🧹 Retrying after stopping process(es): {', '.join(str(pid) for pid in killed_pids)}")
+                print()
+                httpd = ReusableTCPServer(("", PORT), TTFBHandler)
+            else:
+                raise
+        else:
+            raise
+
+    with httpd:
         url = f"http://localhost:{PORT}"
         print(f"🌐 Server running at {url}")
         print()
