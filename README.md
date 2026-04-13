@@ -10,11 +10,11 @@ Made with ❤️ by [@basnugroho](https://github.com/basnugroho) · MIT License 
 
 ## 📸 Screenshots
 
-### Browser-based UI
-![TTFB Test UI](images/ui1.png)
+### Browser UI - Running Test
+![Browser UI Running Test](images/ui-latest-running.png)
 
-### Network Info & Map
-![Network Info](images/ui2.png)
+### Browser UI - Final Results & Charts
+![Browser UI Final Results](images/ui-latest-charts.png)
 
 ### TTFB Analysis
 ![TTFB Analysis](images/ttfb.png)
