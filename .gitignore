@@ -33,4 +33,5 @@ Thumbs.db
 # Logs
 *.log
 
-todo/TTFB command reference .xlsx
+todo/TTFB command reference .xlsxtools/get_ssid
+tools/GetSSID.app/

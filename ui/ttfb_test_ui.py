@@ -505,8 +505,9 @@ def detect_network_info() -> dict:
                         for iface in interfaces:
                             current_network = iface.get('spairport_current_network_information', {})
                             if current_network:
-                                if not info['wifi_ssid']:
-                                    info['wifi_ssid'] = current_network.get('_name')
+                                ssid_name = current_network.get('_name')
+                                if not info['wifi_ssid'] and ssid_name and ssid_name != '<redacted>':
+                                    info['wifi_ssid'] = ssid_name
                                 channel_str = current_network.get('spairport_current_network_information_channel', '')
                                 if channel_str:
                                     ch_match = re.search(r'(\d+)', str(channel_str))
@@ -514,6 +515,30 @@ def detect_network_info() -> dict:
                                         info['wifi_channel'] = int(ch_match.group(1))
                                         info['wifi_band'] = '5GHz' if info['wifi_channel'] >= 36 else '2.4GHz'
                                 break
+            except:
+                pass
+        
+        # Method 5: Get channel from SystemConfiguration (reliable on macOS 26+)
+        if not info['wifi_channel']:
+            try:
+                proc = subprocess.run(['scutil'], input='show State:/Network/Interface/en0/AirPort\nquit\n',
+                                    capture_output=True, text=True, timeout=5)
+                ch_match = re.search(r'CHANNEL\s*:\s*(\d+)', proc.stdout)
+                if ch_match:
+                    info['wifi_channel'] = int(ch_match.group(1))
+                    info['wifi_band'] = '5GHz' if info['wifi_channel'] >= 36 else '2.4GHz'
+            except:
+                pass
+        
+        # Method 6: Fallback - use first preferred wireless network (macOS 26+ redacts SSID)
+        if not info['wifi_ssid'] or info['wifi_ssid'] in (None, '<redacted>'):
+            try:
+                proc = subprocess.run(['networksetup', '-listpreferredwirelessnetworks', 'en0'],
+                                    capture_output=True, text=True, timeout=5)
+                preferred = [l.strip() for l in proc.stdout.splitlines()[1:] if l.strip()]
+                if preferred:
+                    info['wifi_ssid'] = preferred[0]
+                    info['wifi_ssid_method'] = 'preferred'  # Mark as best-guess
             except:
                 pass
         

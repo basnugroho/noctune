@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.noctune.get-ssid</string>
+    <key>CFBundleName</key>
+    <string>NOC Tune SSID Helper</string>
+    <key>NSLocationUsageDescription</key>
+    <string>NOC Tune needs location access to detect your Wi-Fi network name (SSID).</string>
+    <key>NSLocationWhenInUseUsageDescription</key>
+    <string>NOC Tune needs location access to detect your Wi-Fi network name (SSID).</string>
+</dict>
+</plist>
