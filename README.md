@@ -97,6 +97,65 @@ Browser akan terbuka otomatis dengan tampilan:
 
 ---
 
+## 🔄 Flow Sederhana
+
+```mermaid
+flowchart TB
+   subgraph R1[Baris 1]
+      direction LR
+      A[Setup Config] --> B[Run Test]
+      B --> C[Check Prerequisites]
+      C --> D[Detect Network Info]
+      D --> E[Ping Test 8.8.8.8]
+   end
+
+   subgraph R2[Baris 2]
+      direction LR
+      F[TTFB Test per Target\ncurl --max-time 30 URL] --> G[Build Result Row]
+      G --> H{Auto Contribute?}
+      H -- Ya --> I[POST ke API QoSMic]
+      H -- Tidak --> J[Simpan Lokal lalu Manual Contribute]
+      J --> I
+      I --> K[Tampil di Dashboard\nqosmic.solusee.id]
+   end
+
+   E --> F
+```
+
+Alur singkatnya: user mengisi config, menjalankan test, tool melakukan ping dan curl TTFB, lalu hasil disimpan lokal dan bisa langsung dikirim ke API QoSMic agar muncul di dashboard.
+
+## 🧰 Command Project
+
+| Command | Fungsi | Keterangan |
+|---------|--------|------------|
+| `python main.py` | Menjalankan Browser UI | Entry point utama project |
+| `python main.py --ui` | Menjalankan Browser UI | Sama seperti default command |
+| `python main.py --port 8080` | Menjalankan UI di port tertentu | Default port adalah `8766` |
+| `python main.py --location` | Mengambil GPS presisi via browser | Menyimpan ke `notebooks/precise_location.json` |
+| `python main.py --check` | Mengecek prerequisite sistem | Validasi `curl`, `ping`, internet, WiFi, dan package opsional |
+| `python main.py --version` | Menampilkan versi project | Shortcut: `python main.py -v` |
+| `python -m ui.ttfb_test_ui` | Menjalankan server UI langsung dari module | Berguna untuk debug module UI |
+| `python ui/get_location.py` | Menjalankan tool geolocation langsung | Alternatif langsung selain `--location` |
+
+## 🧪 Command yang Dipakai Saat Runtime
+
+| Area | Command / Request | Tujuan |
+|------|-------------------|--------|
+| Prerequisite | `curl --version` | Cek ketersediaan curl |
+| Prerequisite | `ping -c 1 127.0.0.1` | Cek command ping di Linux/macOS |
+| Prerequisite | `ping -n 1 127.0.0.1` | Cek command ping di Windows |
+| Prerequisite | `HEAD https://www.google.com` | Cek koneksi internet |
+| WiFi macOS | `networksetup -getairportnetwork en0` | Cek SSID WiFi |
+| WiFi Windows | `netsh wlan show interfaces` | Cek status WiFi |
+| DNS macOS | `scutil --dns` | Ambil DNS aktif |
+| DNS Windows | `ipconfig /all` | Ambil DNS aktif |
+| Ping test | `ping -c PING_DURATION 8.8.8.8` | Ukur latency dasar |
+| Ping test Windows | `ping -n PING_DURATION 8.8.8.8` | Ukur latency dasar |
+| TTFB test | `curl -o /dev/null -s -w ... --max-time 30 URL` | Ambil timing lookup, connect, TTFB, total |
+| Contribute | `POST https://qosmic.solusee.id/api/ttfb-results/insert` | Kirim hasil ke QoSMic |
+
+---
+
 ## 🌐 Remote Access (Raspberry Pi / Server)
 
 NOC Tune dapat dijalankan di perangkat remote (seperti Raspberry Pi atau server) dan diakses dari device lain dalam satu jaringan.
