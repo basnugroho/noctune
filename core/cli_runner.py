@@ -20,6 +20,7 @@ from ui.ttfb_test_ui import (
     normalize_target_urls,
     parse_config,
     parse_dns_servers,
+    run_dns_traces_for_session,
 )
 
 
@@ -252,6 +253,29 @@ def run_cli_tests(
 
     end_time = datetime.now()
     summary = calculate_summary(results)
+    
+    # Run DNS trace
+    print('Running DNS trace...')
+    test_dns_servers = effective_dns_servers or []
+    system_dns_servers = network_info.get('system_dns_servers', [])
+    
+    def cli_log(msg, level='info'):
+        level_icons = {'info': 'ℹ️', 'success': '✅', 'warning': '⚠️', 'error': '❌'}
+        icon = level_icons.get(level, ' ')
+        print(f"  {icon} {msg}")
+    
+    dns_trace_results = run_dns_traces_for_session(
+        targets=config['TARGETS'],
+        dns_servers=test_dns_servers,
+        system_dns=system_dns_servers,
+        add_log_fn=cli_log
+    )
+    
+    if dns_trace_results:
+        print(f"DNS trace completed: {len(dns_trace_results)} trace(s)")
+    else:
+        print('DNS trace skipped (dig not available or no DNS servers configured)')
+    
     payload = {
         'session_id': session_id,
         'start_time': start_time.isoformat(),
@@ -260,6 +284,7 @@ def run_cli_tests(
         'network_info': network_info,
         'ping_result': ping_result,
         'ttfb_results': results,
+        'dns_trace_results': dns_trace_results,
         'summary': summary,
         'status': 'completed',
         'session_dir': str(session_dir),
@@ -274,10 +299,18 @@ def run_cli_tests(
         'network_info': network_info,
         'summary': summary,
         'ping_result': ping_result,
+        'dns_trace_summary': {
+            'total_traces': len(dns_trace_results),
+            'successful_traces': sum(1 for t in dns_trace_results if t.get('success')),
+        } if dns_trace_results else None,
     })
     _write_json(session_dir / 'ttfb_results.json', results)
     _write_csv(session_dir / 'ttfb_results.csv', results)
     _write_csv(session_dir / 'ttfb_export.csv', build_export_rows(payload))
+    
+    # Save DNS trace results (local only, not submitted to API)
+    if dns_trace_results:
+        _write_json(session_dir / 'dns_trace_results.json', dns_trace_results)
 
     if config.get('AUTO_CONTRIBUTE', True):
         print('Submitting contribution rows...')

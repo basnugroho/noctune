@@ -235,6 +235,179 @@ def resolve_hostname_with_dns_servers(url: str, dns_servers: list[str]) -> tuple
     return hostname, port, resolved_ip, str(answer.nameserver)
 
 
+def run_dns_trace(hostname: str, dns_server: str, timeout: int = 30) -> dict:
+    """
+    Execute dig @dns_server hostname +trace and parse the output.
+    
+    Returns a dict with:
+      - hostname: the queried hostname
+      - dns_server: the DNS server used for initial query
+      - success: bool indicating if trace completed
+      - raw_output: the full dig output
+      - hops: list of delegation steps parsed from output
+      - final_answer: the resolved IP(s) if successful
+      - error: error message if failed
+      - timestamp: when the trace was run
+    """
+    result = {
+        'hostname': hostname,
+        'dns_server': dns_server,
+        'success': False,
+        'raw_output': '',
+        'hops': [],
+        'final_answer': None,
+        'error': None,
+        'timestamp': datetime.now().isoformat(),
+    }
+    
+    try:
+        cmd = ['dig', f'@{dns_server}', hostname, '+trace', '+nodnssec']
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        result['raw_output'] = proc.stdout + proc.stderr
+        
+        if proc.returncode != 0:
+            result['error'] = f'dig exited with code {proc.returncode}'
+            return result
+        
+        # Parse the trace output
+        lines = proc.stdout.split('\n')
+        current_hop = None
+        hops = []
+        final_answers = []
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith(';'):
+                # Skip comments and empty lines, but check for section headers
+                if ';; Received' in line:
+                    # End of a hop section
+                    if current_hop:
+                        hops.append(current_hop)
+                        current_hop = None
+                continue
+            
+            # NS record delegation (e.g., "com. 172800 IN NS a.gtld-servers.net.")
+            ns_match = re.match(r'^(\S+)\s+\d+\s+IN\s+NS\s+(\S+)', line)
+            if ns_match:
+                zone = ns_match.group(1)
+                nameserver = ns_match.group(2)
+                if current_hop is None or current_hop.get('zone') != zone:
+                    if current_hop:
+                        hops.append(current_hop)
+                    current_hop = {'zone': zone, 'type': 'NS', 'nameservers': []}
+                current_hop['nameservers'].append(nameserver)
+                continue
+            
+            # A record (final answer or glue)
+            a_match = re.match(r'^(\S+)\s+\d+\s+IN\s+A\s+(\S+)', line)
+            if a_match:
+                record_name = a_match.group(1)
+                ip = a_match.group(2)
+                # Check if this is the final answer for our hostname
+                if record_name.rstrip('.') == hostname.rstrip('.'):
+                    final_answers.append(ip)
+                continue
+        
+        # Don't forget the last hop
+        if current_hop:
+            hops.append(current_hop)
+        
+        result['hops'] = hops
+        result['final_answer'] = final_answers if final_answers else None
+        result['success'] = len(final_answers) > 0
+        
+    except FileNotFoundError:
+        result['error'] = 'dig command not found'
+    except subprocess.TimeoutExpired:
+        result['error'] = f'DNS trace timed out after {timeout}s'
+    except Exception as e:
+        result['error'] = str(e)
+    
+    return result
+
+
+def run_dns_traces_for_session(
+    targets: list[str],
+    dns_servers: list[str],
+    system_dns: list[str] | None = None,
+    add_log_fn=None
+) -> list[dict]:
+    """
+    Run DNS traces for all target/DNS combinations in a test session.
+    
+    Args:
+        targets: list of target URLs to trace
+        dns_servers: custom DNS servers configured for test (e.g., ['8.8.8.8', '8.8.4.4'])
+        system_dns: system/ISP DNS servers (optional, for comparison)
+        add_log_fn: optional logging function
+    
+    Returns:
+        List of trace results for each target/DNS combination
+    """
+    def log(msg, level='info'):
+        if add_log_fn:
+            add_log_fn(msg, level)
+        else:
+            print(f'  [{level}] {msg}')
+    
+    # Check if dig is available
+    try:
+        subprocess.run(['dig', '-v'], capture_output=True, timeout=5)
+    except FileNotFoundError:
+        log('dig not found, skipping DNS trace', 'warning')
+        return []
+    except Exception as e:
+        log(f'dig check failed: {e}, skipping DNS trace', 'warning')
+        return []
+    
+    trace_results = []
+    
+    # Build list of DNS servers to test
+    all_dns_servers = []
+    
+    # Add custom DNS servers
+    for server in (dns_servers or []):
+        if server and server not in all_dns_servers:
+            all_dns_servers.append(server)
+    
+    # Add system DNS if provided and different from custom
+    for server in (system_dns or []):
+        if server and server not in all_dns_servers:
+            all_dns_servers.append(server)
+    
+    if not all_dns_servers:
+        log('No DNS servers configured for trace', 'warning')
+        return []
+    
+    # Extract hostnames from target URLs
+    hostnames = []
+    for target in targets:
+        parsed = urlparse(normalize_target_url(target))
+        if parsed.hostname and parsed.hostname not in hostnames:
+            hostnames.append(parsed.hostname)
+    
+    total_traces = len(hostnames) * len(all_dns_servers)
+    log(f'Running DNS trace for {len(hostnames)} target(s) × {len(all_dns_servers)} DNS server(s) = {total_traces} trace(s)', 'info')
+    
+    trace_num = 0
+    for hostname in hostnames:
+        for dns_server in all_dns_servers:
+            trace_num += 1
+            log(f'  DNS trace {trace_num}/{total_traces}: {hostname} via @{dns_server}', 'info')
+            
+            trace_result = run_dns_trace(hostname, dns_server)
+            trace_results.append(trace_result)
+            
+            if trace_result['success']:
+                answers = ', '.join(trace_result['final_answer'] or [])
+                hop_count = len(trace_result['hops'])
+                log(f'    → Resolved to {answers} ({hop_count} hops)', 'success')
+            else:
+                log(f'    → Failed: {trace_result.get("error", "unknown error")}', 'warning')
+    
+    return trace_results
+
+
 def sanitize_filename_part(value: str, fallback: str = "Unknown") -> str:
     """Convert arbitrary text to a safe filename fragment."""
     text = (value or fallback).strip()
@@ -415,6 +588,7 @@ def check_prerequisites() -> dict:
         'network': {'status': 'checking', 'message': '', 'required': True},
         'wifi': {'status': 'checking', 'message': '', 'required': False},
         'custom_dns': {'status': 'checking', 'message': '', 'required': True},
+        'dig': {'status': 'checking', 'message': '', 'required': False},
         'python_packages': {'status': 'checking', 'message': '', 'required': False}
     }
     
@@ -504,6 +678,22 @@ def check_prerequisites() -> dict:
             'required': True,
         }
     
+    # Check dig (for DNS trace)
+    try:
+        proc = subprocess.run(['dig', '-v'], capture_output=True, text=True, timeout=5)
+        # dig -v outputs version to stderr
+        version_output = proc.stderr or proc.stdout
+        version_line = version_output.split('\n')[0] if version_output else 'dig available'
+        results['dig'] = {'status': 'ok', 'message': version_line.strip(), 'required': False}
+    except FileNotFoundError:
+        results['dig'] = {
+            'status': 'warning',
+            'message': 'dig not found. DNS trace feature unavailable. Install: brew install bind (macOS) or apt install dnsutils (Linux)',
+            'required': False
+        }
+    except Exception as e:
+        results['dig'] = {'status': 'warning', 'message': f'dig check failed: {str(e)}', 'required': False}
+
     # Check Python packages
     package_specs = [
         ('pandas', 'pandas'),
@@ -565,7 +755,7 @@ def measure_ttfb(
     ttfb_warning_ms: int | None = None,
     dns_servers: list[str] | None = None,
 ) -> dict:
-    """Measure TTFB for a single URL."""
+    """Measure TTFB for a single URL, including dig trace output."""
     normalized_url = normalize_target_url(url)
     curl_format = (
         '{"time_namelookup": %{time_namelookup}, '
@@ -587,11 +777,32 @@ def measure_ttfb(
         normalized_url
     ]
 
+    resolved_ip = None
+    dig_output = None
+    dig_query_time_ms = None
+
     try:
         resolved_host = resolve_hostname_with_dns_servers(normalized_url, dns_servers or [])
         if resolved_host is not None:
             hostname, port, resolved_ip, resolved_dns_server = resolved_host
             cmd[6:6] = ['--resolve', f'{hostname}:{port}:{resolved_ip}']
+            
+            # Run dig @dns_server hostname +trace for this specific DNS server
+            try:
+                dig_cmd = ['dig', f'@{resolved_dns_server}', hostname, '+trace', '+nodnssec']
+                dig_proc = subprocess.run(dig_cmd, capture_output=True, text=True, timeout=30)
+                dig_output = dig_proc.stdout + dig_proc.stderr
+                
+                # Parse query time from dig output (";; Query time: XX msec")
+                query_time_match = re.search(r';;\s*Received\s+\d+\s+bytes\s+from\s+\S+\s+in\s+(\d+)\s*ms', dig_output)
+                if query_time_match:
+                    dig_query_time_ms = float(query_time_match.group(1))
+            except FileNotFoundError:
+                dig_output = 'dig command not found'
+            except subprocess.TimeoutExpired:
+                dig_output = 'dig timed out'
+            except Exception as e:
+                dig_output = f'dig error: {e}'
         else:
             resolved_dns_server = None
     except Exception as exc:
@@ -606,6 +817,9 @@ def measure_ttfb(
             'error': f'Custom DNS resolution failed: {exc}',
             'dns_primary': None,
             'dns_servers': [],
+            'resolved_ip': None,
+            'dig_output': None,
+            'dig_query_time_ms': None,
         }
         return result
     
@@ -620,6 +834,9 @@ def measure_ttfb(
         'error': None,
         'dns_primary': resolved_dns_server,
         'dns_servers': [resolved_dns_server] if resolved_dns_server else [],
+        'resolved_ip': resolved_ip,
+        'dig_output': dig_output,
+        'dig_query_time_ms': dig_query_time_ms,
     }
     
     try:
@@ -1113,6 +1330,8 @@ def run_tests(config: dict):
         auto_contribute = config.get('AUTO_CONTRIBUTE', True)
         dns_test_scenarios = [[server] for server in (wifi_info.get('dns_servers') or [])] if wifi_info.get('dns_override_enabled') else [None]
         total_samples = len(targets) * sample_count * len(dns_test_scenarios)
+        test_results['total_samples'] = total_samples
+        test_results['dns_scenario_count'] = len(dns_test_scenarios)
         contribution_errors = []
 
         if auto_contribute:
@@ -1233,6 +1452,28 @@ def run_tests(config: dict):
             add_log(f"Range: {summary['min_ttfb']:.0f}ms - {summary['max_ttfb']:.0f}ms (Std: {summary['std_ttfb']:.0f}ms)", 'info')
             add_log(f"Status: {summary['good_count']} good, {summary['warning_count']} warning, {summary['poor_count']} poor", 'info')
         
+        # Run DNS trace
+        add_log('', 'divider')
+        add_log('Running DNS trace...', 'info')
+        
+        # Collect DNS servers for trace
+        test_dns_servers = wifi_info.get('dns_servers', []) if wifi_info.get('dns_override_enabled') else []
+        system_dns_servers = wifi_info.get('system_dns_servers', [])
+        
+        dns_trace_results = run_dns_traces_for_session(
+            targets=targets,
+            dns_servers=test_dns_servers,
+            system_dns=system_dns_servers,
+            add_log_fn=add_log
+        )
+        
+        test_results['dns_trace_results'] = dns_trace_results
+        
+        if dns_trace_results:
+            add_log(f"DNS trace completed: {len(dns_trace_results)} trace(s)", 'success')
+        else:
+            add_log('DNS trace skipped (dig not available or no DNS servers configured)', 'warning')
+        
         # Save results
         add_log('Saving results...', 'info')
         
@@ -1243,7 +1484,11 @@ def run_tests(config: dict):
             'end_time': datetime.now().isoformat(),
             'config': config,
             'network_info': test_results['network_info'],
-            'summary': test_results['summary']
+            'summary': test_results['summary'],
+            'dns_trace_summary': {
+                'total_traces': len(dns_trace_results),
+                'successful_traces': sum(1 for t in dns_trace_results if t.get('success')),
+            } if dns_trace_results else None
         }
         
         with open(current_session_dir / 'session_info.json', 'w') as f:
@@ -1252,6 +1497,11 @@ def run_tests(config: dict):
         # Save TTFB results as JSON
         with open(current_session_dir / 'ttfb_results.json', 'w') as f:
             json.dump(all_results, f, indent=2)
+        
+        # Save DNS trace results as JSON (local only, not submitted to API)
+        if dns_trace_results:
+            with open(current_session_dir / 'dns_trace_results.json', 'w') as f:
+                json.dump(dns_trace_results, f, indent=2)
         
         # Try to save as CSV
         try:

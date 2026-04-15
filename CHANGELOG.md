@@ -9,3 +9,6 @@
 - Tampilkan Test DNS dan System DNS di UI.
 - Perjelas diagnostic prerequisite dan interpreter aktif.
 - Pindah tombol utama run ke tengah dan ubah label jadi `Jalankan Tes Sekarang`.
+- Tambah `dig @server domain +trace` otomatis setiap sample TTFB.
+- Tambah field baru: `resolved_ip`, `dig_output`, `dig_query_time_ms`.
+- Update unique key include `dns_primary` untuk multi-DNS scenario.

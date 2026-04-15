@@ -574,9 +574,10 @@
                 
                 // Update progress
                 if (status.ttfb_results && status.config) {
-                    const total = status.config.TARGETS.length * status.config.SAMPLE_COUNT;
+                    // Use backend-calculated total_samples which includes DNS scenarios
+                    const total = status.total_samples || (status.config.TARGETS.length * status.config.SAMPLE_COUNT);
                     const current = status.ttfb_results.length;
-                    const pct = Math.round((current / total) * 100);
+                    const pct = Math.min(100, Math.round((current / total) * 100));
                     document.getElementById('progress-fill').style.width = pct + '%';
                     document.getElementById('progress-count').textContent = current + ' / ' + total;
                     document.getElementById('progress-percent').textContent = pct + '%';
