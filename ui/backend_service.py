@@ -45,11 +45,13 @@ def build_export_rows(results_payload: dict) -> list[dict]:
     location = network_info.get('location', {}) or {}
     config = results_payload.get('config', {}) or {}
     summary = results_payload.get('summary', {}) or {}
-    dns_servers = network_info.get('dns_servers', []) or []
-    dns_server_text = ';'.join(dns_servers) if isinstance(dns_servers, list) else str(dns_servers)
-
     export_rows = []
     for result in results:
+        row_dns_servers = result.get('dns_servers')
+        if row_dns_servers in (None, '', []):
+            row_dns_servers = network_info.get('dns_servers', []) or []
+        dns_server_text = ';'.join(row_dns_servers) if isinstance(row_dns_servers, list) else str(row_dns_servers)
+
         row = {
             'session_id': session_id,
             'test_start_time': results_payload.get('start_time', ''),
@@ -81,7 +83,7 @@ def build_export_rows(results_payload: dict) -> list[dict]:
             'wifi_channel': network_info.get('wifi_channel'),
             'signal_threshold': network_info.get('signal_threshold'),
             'signal_status': network_info.get('signal_status'),
-            'dns_primary': network_info.get('dns_primary'),
+            'dns_primary': result.get('dns_primary') or network_info.get('dns_primary'),
             'dns_servers': dns_server_text or None,
             'location_city': location.get('city'),
             'location_region': location.get('region'),
@@ -144,6 +146,17 @@ def build_contribution_row(row: dict) -> dict:
     for key in ['test_start_time', 'test_end_time', 'timestamp', 'location_browser_timestamp', 'location_saved_at']:
         normalized[key] = normalize_sql_datetime(normalized.get(key))
     return normalized
+
+
+def is_duplicate_contribution_error(response_text: str) -> bool:
+    """Return True when the contribute API reports an already-inserted row."""
+    normalized = (response_text or '').lower()
+    return (
+        'duplicate entry' in normalized
+        or 'integrity constraint violation' in normalized
+        or 'uq_ttfb_results_row' in normalized
+        or 'sqlstate[23000]' in normalized
+    )
 
 
 def calculate_summary(results: list[dict]) -> dict:
@@ -225,6 +238,13 @@ def submit_contribution_row(
                 response_text = e.read().decode('utf-8', errors='replace')
             except Exception:
                 response_text = ''
+        if is_duplicate_contribution_error(response_text):
+            if log_callback:
+                log_callback(
+                    f"Contribute row {index}/{total} SKIP (already submitted): {row.get('target_name')} sample #{row.get('sample_num')}",
+                    'info',
+                )
+            return True, ''
         error_suffix = f" | Response: {response_text}" if response_text else ''
         error_message = f"Row {index} failed for {row.get('target_name')} sample #{row.get('sample_num')}: {e}{error_suffix}"
         if log_callback:

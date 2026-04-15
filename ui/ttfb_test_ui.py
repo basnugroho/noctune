@@ -27,6 +27,7 @@ import time
 import re
 import platform
 import queue
+import importlib
 from pathlib import Path
 from datetime import datetime
 from urllib.parse import urlparse, parse_qs
@@ -67,6 +68,14 @@ STATIC_ASSETS = {
 }
 
 
+def load_dns_resolver_module():
+    """Load dnspython lazily so newly installed packages are detected without stale startup state."""
+    try:
+        return importlib.import_module('dns.resolver')
+    except ImportError:
+        return None
+
+
 def normalize_target_url(value: str) -> str:
     """Ensure target values are valid absolute URLs for curl and the contribute API."""
     text = (value or '').strip()
@@ -88,6 +97,142 @@ def normalize_target_urls(values) -> list[str]:
         normalized.append(url)
         seen.add(url)
     return normalized
+
+
+def parse_dns_servers(values) -> list[str]:
+    """Parse DNS server values from a comma-separated string or sequence."""
+    if values is None:
+        return []
+
+    if isinstance(values, str):
+        raw_values = values.split(',')
+    else:
+        raw_values = list(values)
+
+    servers = []
+    seen = set()
+    for value in raw_values:
+        server = str(value or '').strip()
+        if not server or server in seen:
+            continue
+        servers.append(server)
+        seen.add(server)
+    return servers
+
+
+def parse_manual_coordinates(latitude_value, longitude_value) -> tuple[float, float] | None:
+    """Parse manual latitude/longitude values from config or API input."""
+    lat_text = '' if latitude_value is None else str(latitude_value).strip()
+    lon_text = '' if longitude_value is None else str(longitude_value).strip()
+
+    if not lat_text and not lon_text:
+        return None
+    if not lat_text or not lon_text:
+        raise ValueError('Both manual latitude and longitude are required')
+
+    latitude = float(lat_text)
+    longitude = float(lon_text)
+
+    if not -90 <= latitude <= 90:
+        raise ValueError('Manual latitude must be between -90 and 90')
+    if not -180 <= longitude <= 180:
+        raise ValueError('Manual longitude must be between -180 and 180')
+
+    return latitude, longitude
+
+
+def get_configured_dns_servers(config: dict) -> list[str]:
+    """Return the custom DNS servers configured for test execution."""
+    if not config.get('USE_CUSTOM_DNS'):
+        return []
+    return parse_dns_servers(config.get('CUSTOM_DNS_SERVERS'))
+
+
+def apply_manual_location_override(
+    network_info: dict,
+    latitude: float,
+    longitude: float,
+    *,
+    source: str = 'manual_config',
+    method: str = 'Manual (Config)',
+) -> None:
+    """Overlay manual coordinates on detected network info."""
+    location = dict(network_info.get('location') or {})
+    geocoded = reverse_geocode_coordinates(latitude, longitude)
+
+    location['lat'] = latitude
+    location['lon'] = longitude
+    location['accuracy'] = None
+    location['source'] = source
+    location['method'] = method
+    location['is_precise'] = False
+    location['input_mode'] = 'manual'
+    location['city'] = geocoded.get('city')
+    location['region'] = geocoded.get('region')
+    location['country'] = geocoded.get('country')
+    network_info['location'] = location
+
+
+def apply_runtime_overrides(network_info: dict, config: dict) -> dict:
+    """Apply DNS and location overrides from config onto detected network info."""
+    info = dict(network_info or {})
+    system_dns_servers = parse_dns_servers(info.get('dns_servers'))
+    system_dns_primary = info.get('dns_primary')
+    custom_dns_servers = get_configured_dns_servers(config)
+
+    info['system_dns_primary'] = system_dns_primary
+    info['system_dns_servers'] = system_dns_servers
+    info['dns_override_enabled'] = bool(custom_dns_servers)
+
+    if custom_dns_servers:
+        info['dns_primary'] = custom_dns_servers[0]
+        info['dns_servers'] = custom_dns_servers
+        info['dns_source'] = 'custom'
+    else:
+        info['dns_servers'] = system_dns_servers
+        info['dns_source'] = 'system'
+
+    manual_coordinates = parse_manual_coordinates(
+        config.get('MANUAL_LATITUDE'),
+        config.get('MANUAL_LONGITUDE'),
+    )
+    if manual_coordinates is not None:
+        apply_manual_location_override(
+            info,
+            manual_coordinates[0],
+            manual_coordinates[1],
+            source='manual_config',
+            method='Manual (Config)',
+        )
+
+    return info
+
+
+def resolve_hostname_with_dns_servers(url: str, dns_servers: list[str]) -> tuple[str, int, str, str] | None:
+    """Resolve a URL hostname via the provided DNS servers for curl --resolve."""
+    effective_dns_servers = parse_dns_servers(dns_servers)
+    if not effective_dns_servers:
+        return None
+    dns_resolver_module = load_dns_resolver_module()
+    if dns_resolver_module is None:
+        raise RuntimeError('dnspython is required for custom DNS override but is not installed')
+
+    parsed = urlparse(normalize_target_url(url))
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError(f'Unable to determine hostname from URL: {url}')
+
+    port = parsed.port
+    if port is None:
+        port = 443 if parsed.scheme == 'https' else 80
+
+    resolver = dns_resolver_module.Resolver(configure=False)
+    resolver.nameservers = effective_dns_servers
+    resolver.lifetime = 10
+
+    answer = resolver.resolve(hostname, 'A')
+    resolved_ip = answer[0].to_text()
+    return hostname, port, resolved_ip, str(answer.nameserver)
 
 
 def sanitize_filename_part(value: str, fallback: str = "Unknown") -> str:
@@ -173,12 +318,16 @@ def parse_config(config_path: Path) -> dict:
         'DELAY_SECONDS': 2,
         'PING_DURATION': 10,
         'AUTO_CONTRIBUTE': True,
+        'USE_CUSTOM_DNS': True,
+        'CUSTOM_DNS_SERVERS': '8.8.8.8, 8.8.4.4',
         'SIGNAL_THRESHOLD_DBM': -70,
         'TTFB_GOOD_MS': 200,
         'TTFB_WARNING_MS': 500,
         'ONT_DNS': '',
         'BRAND': '',
-        'NO_INTERNET': ''
+        'NO_INTERNET': '',
+        'MANUAL_LATITUDE': '',
+        'MANUAL_LONGITUDE': '',
     }
     
     if not config_path.exists():
@@ -202,9 +351,9 @@ def parse_config(config_path: Path) -> dict:
                 elif key in ['SAMPLE_COUNT', 'DELAY_SECONDS', 'PING_DURATION', 
                            'SIGNAL_THRESHOLD_DBM', 'TTFB_GOOD_MS', 'TTFB_WARNING_MS']:
                     config[key] = int(value)
-                elif key == 'AUTO_CONTRIBUTE':
+                elif key in ['AUTO_CONTRIBUTE', 'USE_CUSTOM_DNS']:
                     config[key] = value.lower() in ['true', '1', 'yes', 'on']
-                elif key in ['ONT_DNS', 'BRAND', 'NO_INTERNET']:
+                elif key in ['ONT_DNS', 'BRAND', 'NO_INTERNET', 'CUSTOM_DNS_SERVERS', 'MANUAL_LATITUDE', 'MANUAL_LONGITUDE']:
                     config[key] = value
     except Exception as e:
         print(f"Error parsing config: {e}")
@@ -231,11 +380,19 @@ def save_config(config: dict, config_path: Path) -> bool:
             f.write(f"DELAY_SECONDS = {config.get('DELAY_SECONDS', 2)}\n")
             f.write(f"PING_DURATION = {config.get('PING_DURATION', 10)}\n")
             f.write(f"AUTO_CONTRIBUTE = {'True' if config.get('AUTO_CONTRIBUTE', True) else 'False'}\n\n")
+
+            f.write("# DNS override for test requests only (does not change OS DNS)\n")
+            f.write(f"USE_CUSTOM_DNS = {'True' if config.get('USE_CUSTOM_DNS', True) else 'False'}\n")
+            f.write(f"CUSTOM_DNS_SERVERS = {', '.join(parse_dns_servers(config.get('CUSTOM_DNS_SERVERS', '8.8.8.8, 8.8.4.4')))}\n\n")
             
             f.write("# Thresholds\n")
             f.write(f"SIGNAL_THRESHOLD_DBM = {config.get('SIGNAL_THRESHOLD_DBM', -70)}\n")
             f.write(f"TTFB_GOOD_MS = {config.get('TTFB_GOOD_MS', 200)}\n")
             f.write(f"TTFB_WARNING_MS = {config.get('TTFB_WARNING_MS', 500)}\n\n")
+
+            f.write("# Optional: Manual coordinates if browser geolocation is unavailable\n")
+            f.write(f"MANUAL_LATITUDE = {config.get('MANUAL_LATITUDE', '')}\n")
+            f.write(f"MANUAL_LONGITUDE = {config.get('MANUAL_LONGITUDE', '')}\n\n")
             
             f.write("# Optional: ONT DNS (fallback if auto-detect fails)\n")
             f.write(f"ONT_DNS = {config.get('ONT_DNS', '')}\n\n")
@@ -257,6 +414,7 @@ def check_prerequisites() -> dict:
         'ping': {'status': 'checking', 'message': '', 'required': True},
         'network': {'status': 'checking', 'message': '', 'required': True},
         'wifi': {'status': 'checking', 'message': '', 'required': False},
+        'custom_dns': {'status': 'checking', 'message': '', 'required': True},
         'python_packages': {'status': 'checking', 'message': '', 'required': False}
     }
     
@@ -331,37 +489,54 @@ def check_prerequisites() -> dict:
         wifi_message = 'WiFi check not implemented for this OS'
     
     results['wifi'] = {'status': wifi_status, 'message': wifi_message, 'required': False}
+
+    # Check custom DNS support
+    if load_dns_resolver_module() is None:
+        results['custom_dns'] = {
+            'status': 'error',
+            'message': 'dnspython is missing. Run: pip install dnspython',
+            'required': True,
+        }
+    else:
+        results['custom_dns'] = {
+            'status': 'ok',
+            'message': 'Custom DNS resolver available',
+            'required': True,
+        }
     
     # Check Python packages
+    package_specs = [
+        ('pandas', 'pandas'),
+        ('numpy', 'numpy'),
+        ('matplotlib', 'matplotlib'),
+        ('tqdm', 'tqdm'),
+    ]
     missing_packages = []
-    try:
-        import pandas
-    except ImportError:
-        missing_packages.append('pandas')
-    
-    try:
-        import numpy
-    except ImportError:
-        missing_packages.append('numpy')
-    
-    try:
-        import matplotlib
-    except ImportError:
-        missing_packages.append('matplotlib')
-    
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        missing_packages.append('tqdm')
+    installed_packages = []
+    for module_name, package_name in package_specs:
+        try:
+            module = importlib.import_module(module_name)
+            version = getattr(module, '__version__', None)
+            installed_packages.append(f'{package_name} {version}' if version else package_name)
+        except ImportError:
+            missing_packages.append(package_name)
     
     if missing_packages:
         results['python_packages'] = {
             'status': 'warning',
-            'message': f'Optional for notebook/report workflows: missing {", ".join(missing_packages)}. Run: pip install {" ".join(missing_packages)}',
+            'message': (
+                f'Optional for notebook/report workflows: missing {", ".join(missing_packages)}. '
+                f'Interpreter: {sys.executable}. '
+                f'Run: pip install {" ".join(missing_packages)}'
+            ),
             'required': False
         }
     else:
-        results['python_packages'] = {'status': 'ok', 'message': 'Optional analysis packages installed', 'required': False}
+        results['python_packages'] = {
+            'status': 'ok',
+            'message': f'Optional analysis packages installed via {sys.executable}: {", ".join(installed_packages)}',
+            'required': False,
+        }
     
     return results
 
@@ -383,7 +558,13 @@ def add_log(message: str, level: str = 'info'):
         print(f'  {icon}  {message}')
 
 
-def measure_ttfb(url: str) -> dict:
+def measure_ttfb(
+    url: str,
+    *,
+    ttfb_good_ms: int | None = None,
+    ttfb_warning_ms: int | None = None,
+    dns_servers: list[str] | None = None,
+) -> dict:
     """Measure TTFB for a single URL."""
     normalized_url = normalize_target_url(url)
     curl_format = (
@@ -405,6 +586,28 @@ def measure_ttfb(url: str) -> dict:
         '--max-time', '30',
         normalized_url
     ]
+
+    try:
+        resolved_host = resolve_hostname_with_dns_servers(normalized_url, dns_servers or [])
+        if resolved_host is not None:
+            hostname, port, resolved_ip, resolved_dns_server = resolved_host
+            cmd[6:6] = ['--resolve', f'{hostname}:{port}:{resolved_ip}']
+        else:
+            resolved_dns_server = None
+    except Exception as exc:
+        result = {
+            'url': normalized_url,
+            'ttfb_ms': None,
+            'lookup_ms': None,
+            'connect_ms': None,
+            'total_ms': None,
+            'http_code': None,
+            'status': 'error',
+            'error': f'Custom DNS resolution failed: {exc}',
+            'dns_primary': None,
+            'dns_servers': [],
+        }
+        return result
     
     result = {
         'url': normalized_url,
@@ -414,7 +617,9 @@ def measure_ttfb(url: str) -> dict:
         'total_ms': None,
         'http_code': None,
         'status': 'unknown',
-        'error': None
+        'error': None,
+        'dns_primary': resolved_dns_server,
+        'dns_servers': [resolved_dns_server] if resolved_dns_server else [],
     }
     
     try:
@@ -429,9 +634,11 @@ def measure_ttfb(url: str) -> dict:
             result['http_code'] = data['http_code']
             
             config = parse_config(CONFIG_FILE)
-            if result['ttfb_ms'] < config['TTFB_GOOD_MS']:
+            good_threshold = ttfb_good_ms if ttfb_good_ms is not None else config['TTFB_GOOD_MS']
+            warning_threshold = ttfb_warning_ms if ttfb_warning_ms is not None else config['TTFB_WARNING_MS']
+            if result['ttfb_ms'] < good_threshold:
                 result['status'] = 'good'
-            elif result['ttfb_ms'] < config['TTFB_WARNING_MS']:
+            elif result['ttfb_ms'] < warning_threshold:
                 result['status'] = 'warning'
             else:
                 result['status'] = 'poor'
@@ -805,7 +1012,7 @@ def run_tests(config: dict):
     try:
         # Detect network info
         add_log('Detecting network information...', 'info')
-        test_results['network_info'] = detect_network_info()
+        test_results['network_info'] = apply_runtime_overrides(detect_network_info(), config)
         
         # Add signal threshold from config to network_info
         test_results['network_info']['signal_threshold'] = config.get('SIGNAL_THRESHOLD_DBM', -70)
@@ -830,10 +1037,13 @@ def run_tests(config: dict):
             channel_str = f" (Channel {wifi_info.get('wifi_channel')})" if wifi_info.get('wifi_channel') else ""
             add_log(f"Band: {wifi_info['wifi_band']}{channel_str}", 'info')
         if wifi_info.get('dns_primary'):
-            add_log(f"DNS: {wifi_info['dns_primary']}", 'info')
+            dns_label = 'Test DNS' if wifi_info.get('dns_override_enabled') else 'DNS'
+            add_log(f"{dns_label}: {wifi_info['dns_primary']}", 'info')
+            if wifi_info.get('dns_override_enabled') and wifi_info.get('system_dns_primary'):
+                add_log(f"System DNS: {wifi_info['system_dns_primary']}", 'info')
         if wifi_info.get('location'):
             loc = wifi_info['location']
-            method = 'GPS' if loc.get('is_precise') else 'IP'
+            method = loc.get('method') or ('GPS' if loc.get('is_precise') else 'IP')
             add_log(f"Location: {loc.get('city')}, {loc.get('country')} [{method}]", 'info')
             if loc.get('isp'):
                 add_log(f"ISP: {loc.get('isp')}", 'info')
@@ -901,7 +1111,8 @@ def run_tests(config: dict):
         sample_count = config.get('SAMPLE_COUNT', 5)
         delay = config.get('DELAY_SECONDS', 2)
         auto_contribute = config.get('AUTO_CONTRIBUTE', True)
-        total_samples = len(targets) * sample_count
+        dns_test_scenarios = [[server] for server in (wifi_info.get('dns_servers') or [])] if wifi_info.get('dns_override_enabled') else [None]
+        total_samples = len(targets) * sample_count * len(dns_test_scenarios)
         contribution_errors = []
 
         if auto_contribute:
@@ -922,75 +1133,86 @@ def run_tests(config: dict):
             
             target_results = []
             
-            for sample_num in range(1, sample_count + 1):
+            for dns_scenario_index, dns_scenario in enumerate(dns_test_scenarios, start=1):
+                dns_label = dns_scenario[0] if dns_scenario else (wifi_info.get('dns_primary') or 'system')
+                if wifi_info.get('dns_override_enabled'):
+                    add_log(f"  DNS scenario {dns_scenario_index}/{len(dns_test_scenarios)}: {dns_label}", 'info')
+
+                for sample_num in range(1, sample_count + 1):
                 # Check for stop
-                if test_stopped:
-                    add_log('Test stopped by user', 'warning')
-                    test_results['status'] = 'stopped'
-                    test_running = False
-                    return
+                    if test_stopped:
+                        add_log('Test stopped by user', 'warning')
+                        test_results['status'] = 'stopped'
+                        test_running = False
+                        return
                 
                 # Check for pause
-                if test_paused:
-                    print(f'  ⏸️  Test paused...')
-                while test_paused and not test_stopped:
-                    time.sleep(0.5)
-                if not test_paused and not test_stopped and sample_num > 1:
-                    pass  # resumed message handled by POST handler
+                    if test_paused:
+                        print(f'  ⏸️  Test paused...')
+                    while test_paused and not test_stopped:
+                        time.sleep(0.5)
+                    if not test_paused and not test_stopped and sample_num > 1:
+                        pass  # resumed message handled by POST handler
                 
-                result = measure_ttfb(normalized_target_url)
-                result['sample_num'] = sample_num
-                result['target_name'] = target_name
-                result['timestamp'] = datetime.now().isoformat()
-                result['time_short'] = datetime.now().strftime('%H:%M:%S')
+                    result = measure_ttfb(
+                        normalized_target_url,
+                        ttfb_good_ms=config.get('TTFB_GOOD_MS'),
+                        ttfb_warning_ms=config.get('TTFB_WARNING_MS'),
+                        dns_servers=dns_scenario,
+                    )
+                    result['sample_num'] = sample_num
+                    result['target_name'] = target_name
+                    result['timestamp'] = datetime.now().isoformat()
+                    result['time_short'] = datetime.now().strftime('%H:%M:%S')
+                    result['dns_scenario'] = dns_label
                 
                 # Add network info to result for expanded table
-                result['rssi'] = test_results['network_info'].get('wifi_rssi')
-                result['band'] = test_results['network_info'].get('wifi_band')
-                result['dns'] = test_results['network_info'].get('dns_primary')
+                    result['rssi'] = test_results['network_info'].get('wifi_rssi')
+                    result['band'] = test_results['network_info'].get('wifi_band')
+                    result['dns'] = result.get('dns_primary') or test_results['network_info'].get('dns_primary')
                 
-                target_results.append(result)
-                all_results.append(result)
-                test_results['ttfb_results'] = all_results
-                test_results['elapsed_seconds'] = (datetime.now() - test_results['_start_time_obj']).total_seconds()
-                test_results['end_time'] = datetime.now().isoformat()
-                test_results['summary'] = calculate_summary(all_results)
+                    target_results.append(result)
+                    all_results.append(result)
+                    test_results['ttfb_results'] = all_results
+                    test_results['elapsed_seconds'] = (datetime.now() - test_results['_start_time_obj']).total_seconds()
+                    test_results['end_time'] = datetime.now().isoformat()
+                    test_results['summary'] = calculate_summary(all_results)
 
-                if auto_contribute:
-                    export_rows = build_export_rows(test_results)
-                    current_row = export_rows[-1] if export_rows else None
-                    if current_row:
-                        row_done = len(all_results)
-                        ok, error_message = submit_contribution_row(current_row, row_done, total_samples)
-                        if ok:
-                            test_results['contribution']['submitted'] += 1
-                        else:
-                            test_results['contribution']['failed'] += 1
-                            contribution_errors.append(error_message)
-                        test_results['contribution']['errors'] = contribution_errors
-                        test_results['contribution']['status'] = 'running'
+                    if auto_contribute:
+                        export_rows = build_export_rows(test_results)
+                        current_row = export_rows[-1] if export_rows else None
+                        if current_row:
+                            row_done = len(all_results)
+                            ok, error_message = submit_contribution_row(current_row, row_done, total_samples)
+                            if ok:
+                                test_results['contribution']['submitted'] += 1
+                            else:
+                                test_results['contribution']['failed'] += 1
+                                contribution_errors.append(error_message)
+                            test_results['contribution']['errors'] = contribution_errors
+                            test_results['contribution']['status'] = 'running'
                 
                 # Log result
-                if result['ttfb_ms']:
-                    status_icon = {'good': '✓', 'warning': '⚠', 'poor': '✗'}.get(result['status'], '?')
-                    log_level = {'good': 'success', 'warning': 'warning', 'poor': 'error'}.get(result['status'], 'info')
-                    add_log(f"  Sample {sample_num}/{sample_count}: {result['ttfb_ms']}ms [{status_icon}]", log_level)
-                else:
-                    add_log(f"  Sample {sample_num}/{sample_count}: ERROR - {result.get('error', 'Unknown')}", 'error')
+                    if result['ttfb_ms']:
+                        status_icon = {'good': '✓', 'warning': '⚠', 'poor': '✗'}.get(result['status'], '?')
+                        log_level = {'good': 'success', 'warning': 'warning', 'poor': 'error'}.get(result['status'], 'info')
+                        add_log(f"  Sample {sample_num}/{sample_count} [{dns_label}]: {result['ttfb_ms']}ms [{status_icon}]", log_level)
+                    else:
+                        add_log(f"  Sample {sample_num}/{sample_count} [{dns_label}]: ERROR - {result.get('error', 'Unknown')}", 'error')
                 
                 # Terminal progress
-                done = (target_idx - 1) * sample_count + sample_num
-                pct = int(done / total_samples * 100)
-                bar_len = 30
-                filled = int(bar_len * done / total_samples)
-                bar = '█' * filled + '░' * (bar_len - filled)
-                elapsed = test_results['elapsed_seconds']
-                eta = (elapsed / done * (total_samples - done)) if done > 0 else 0
-                print(f'\r  [{bar}] {pct}% ({done}/{total_samples}) ETA: {int(eta)}s  ', end='', flush=True)
+                    done = len(all_results)
+                    pct = int(done / total_samples * 100)
+                    bar_len = 30
+                    filled = int(bar_len * done / total_samples)
+                    bar = '█' * filled + '░' * (bar_len - filled)
+                    elapsed = test_results['elapsed_seconds']
+                    eta = (elapsed / done * (total_samples - done)) if done > 0 else 0
+                    print(f'\r  [{bar}] {pct}% ({done}/{total_samples}) ETA: {int(eta)}s  ', end='', flush=True)
                 
                 # Delay between samples
-                if sample_num < sample_count:
-                    time.sleep(delay)
+                    if sample_num < sample_count:
+                        time.sleep(delay)
             
             # Calculate target summary
             valid_results = [r for r in target_results if r.get('ttfb_ms')]
@@ -1104,7 +1326,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             
         elif self.path == '/api/network':
             import socket
-            network_info = detect_network_info()
+            network_info = apply_runtime_overrides(detect_network_info(), parse_config(CONFIG_FILE))
             # Add local IP for network access
             try:
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -1243,7 +1465,10 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             lines.append(f"📻 Band: {network_info.get('wifi_band', 'N/A')}")
             if network_info.get('wifi_channel'):
                 lines.append(f"   • Channel: {network_info['wifi_channel']}")
-            lines.append(f"🌐 DNS: {network_info.get('dns_primary', 'N/A')}")
+            dns_label = 'Test DNS' if network_info.get('dns_override_enabled') else 'DNS'
+            lines.append(f"🌐 {dns_label}: {network_info.get('dns_primary', 'N/A')}")
+            if network_info.get('dns_override_enabled') and network_info.get('system_dns_primary'):
+                lines.append(f"🌐 System DNS: {network_info.get('system_dns_primary', 'N/A')}")
             lines.append(f"📡 SSID: {network_info.get('wifi_ssid', 'N/A')}")
             lines.append("")
             
@@ -1355,6 +1580,9 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             try:
                 config = json.loads(post_data)
                 config['TARGETS'] = normalize_target_urls(config.get('TARGETS', []))
+                parse_manual_coordinates(config.get('MANUAL_LATITUDE'), config.get('MANUAL_LONGITUDE'))
+                if config.get('USE_CUSTOM_DNS') and not parse_dns_servers(config.get('CUSTOM_DNS_SERVERS')):
+                    raise ValueError('At least one custom DNS server is required when DNS override is enabled')
                 success = save_config(config, CONFIG_FILE)
                 self.send_json({'success': success})
             except Exception as e:
@@ -1393,6 +1621,9 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                 try:
                     config = json.loads(post_data)
                     config['TARGETS'] = normalize_target_urls(config.get('TARGETS', []))
+                    parse_manual_coordinates(config.get('MANUAL_LATITUDE'), config.get('MANUAL_LONGITUDE'))
+                    if config.get('USE_CUSTOM_DNS') and not parse_dns_servers(config.get('CUSTOM_DNS_SERVERS')):
+                        raise ValueError('At least one custom DNS server is required when DNS override is enabled')
                     # Reset control flags
                     test_paused = False
                     test_stopped = False
@@ -1442,66 +1673,25 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
         }
         add_log(f"Contribute started: submitting {len(rows)} row(s) to QoSMic API", 'info')
 
-        submitted = 0
-        failed = 0
-        errors = []
+        contribution_result = submit_contribution_rows(rows, log_callback=add_log)
+        test_results['contribution'] = contribution_result
 
-        for index, row in enumerate(rows, 1):
-            contribution_row = build_contribution_row(row)
-            payload = json.dumps({'row': contribution_row}).encode('utf-8')
-            request = urllib.request.Request(
-                CONTRIBUTE_API_URL,
-                data=payload,
-                headers={
-                    'Content-Type': 'application/json',
-                    'Accept': 'application/json',
-                    'User-Agent': 'NOC-Tune/1.0'
-                },
-                method='POST'
-            )
-
-            try:
-                with urllib.request.urlopen(request, timeout=20) as response:
-                    response_text = response.read().decode('utf-8', errors='replace')
-                submitted += 1
-                add_log(
-                    f"Contribute row {index}/{len(rows)} OK: {row.get('target_name')} sample #{row.get('sample_num')}",
-                    'success'
-                )
-            except Exception as e:
-                failed += 1
-                response_text = ''
-                if hasattr(e, 'read'):
-                    try:
-                        response_text = e.read().decode('utf-8', errors='replace')
-                    except Exception:
-                        response_text = ''
-                error_suffix = f" | Response: {response_text}" if response_text else ''
-                error_message = f"Row {index} failed for {row.get('target_name')} sample #{row.get('sample_num')}: {e}{error_suffix}"
-                errors.append(error_message)
-                add_log(error_message, 'error')
-
-        status = 'success' if failed == 0 else ('partial' if submitted > 0 else 'error')
-        test_results['contribution'] = {
-            'status': status,
-            'submitted': submitted,
-            'failed': failed,
-            'total': len(rows),
-            'errors': errors,
-            'updated_at': datetime.now().isoformat(),
-        }
-
-        if failed == 0:
-            add_log(f"Contribute finished: {submitted}/{len(rows)} row(s) submitted", 'success')
-            self.send_json({'success': True, 'submitted': submitted, 'failed': failed, 'total': len(rows)})
+        if contribution_result['failed'] == 0:
+            add_log(f"Contribute finished: {contribution_result['submitted']}/{len(rows)} row(s) submitted", 'success')
+            self.send_json({
+                'success': True,
+                'submitted': contribution_result['submitted'],
+                'failed': contribution_result['failed'],
+                'total': len(rows),
+            })
         else:
             self.send_json({
-                'success': submitted > 0,
-                'submitted': submitted,
-                'failed': failed,
+                'success': contribution_result['submitted'] > 0,
+                'submitted': contribution_result['submitted'],
+                'failed': contribution_result['failed'],
                 'total': len(rows),
-                'errors': errors,
-                'error': errors[0] if errors else 'Unknown contribution error'
+                'errors': contribution_result['errors'],
+                'error': contribution_result['errors'][0] if contribution_result['errors'] else 'Unknown contribution error'
             })
     
     def send_json(self, data):

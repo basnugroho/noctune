@@ -8,6 +8,8 @@ NOC Tune adalah aplikasi browser-based untuk mengukur TTFB secara otomatis, meli
 
 Made with ❤️ by [@basnugroho](https://github.com/basnugroho) · MIT License · [Contribute](https://github.com/basnugroho/noctune)
 
+Latest updates: see [CHANGELOG.md](CHANGELOG.md).
+
 ---
 
 ## 📸 Screenshots
@@ -130,6 +132,7 @@ Alur singkatnya: user mengisi config, menjalankan test, tool melakukan ping dan 
 |---------|--------|------------|
 | `python main.py` | Menjalankan Browser UI | Entry point utama project |
 | `python main.py --ui` | Menjalankan Browser UI | Sama seperti default command |
+| `python main.py --run` | Menjalankan test via CLI | Cocok untuk server, Linux, cron, dan tanpa buka browser |
 | `python main.py --port 8080` | Menjalankan UI di port tertentu | Default port adalah `8766` |
 | `python main.py --location` | Mengambil GPS presisi via browser | Menyimpan ke `notebooks/precise_location.json` |
 | `python main.py --check` | Mengecek prerequisite sistem | Validasi `curl`, `ping`, internet, WiFi, dan package opsional |
@@ -226,6 +229,7 @@ pkill -f "python main.py"
 noc_tune/
 ├── main.py                         # 🚀 Entry point utama
 ├── README.md                       # Dokumentasi project
+├── CHANGELOG.md                    # Ringkasan update per tanggal
 ├── requirements.txt                # Dependencies Python
 ├── .gitignore                      # Git ignore rules
 ├── core/                           # Core modules
@@ -236,7 +240,9 @@ noc_tune/
 ├── ui/                             # UI modules
 │   ├── __init__.py
 │   ├── ttfb_test_ui.py             # Browser-based TTFB UI
-│   └── get_location.py             # GPS location via browser
+│   ├── get_location.py             # GPS location via browser
+│   ├── static/                     # CSS dan JavaScript UI
+│   └── templates/                  # HTML template UI
 ├── images/                         # Screenshots
 ├── notebooks/                      # 📓 Jupyter notebooks
 │   ├── ttfb_test.ipynb             # Notebook TTFB Testing
@@ -247,7 +253,9 @@ noc_tune/
 │           ├── all_results_*.csv
 │           ├── summary_*.csv
 │           └── analysis_chart_*.png
-└── docs/                           # Dokumentasi tambahan
+├── sql/                            # SQL utilities
+├── tools/                          # Helper scripts
+└── todo/                           # Catatan kerja
 ```
 
 ---
@@ -257,10 +265,58 @@ noc_tune/
 ```bash
 python main.py                  # Jalankan UI (default)
 python main.py --port 8080      # Custom port
+python main.py --run            # Jalankan test via terminal/CLI
 python main.py --location       # Dapatkan GPS presisi via browser
 python main.py --check          # Cek prerequisites saja
 python main.py --version        # Tampilkan versi
 ```
+
+### CLI Mode (`--run`)
+
+CLI mode cocok jika test dijalankan dari Linux server, Raspberry Pi, cronjob, atau device tanpa akses UI browser.
+
+```bash
+python main.py --run
+```
+
+Argumen yang tersedia saat memakai `--run`:
+
+| Argumen | Fungsi | Contoh |
+|---------|--------|--------|
+| `--config` | Pakai file config tertentu | `--config=notebooks/config.txt` |
+| `--loc=lat,lon` | Isi koordinat manual | `--loc=-6.2000,106.8166` |
+| `--targets=url1,url2` | Override target | `--targets=https://example.com,https://google.com` |
+| `--samples` | Override sample count | `--samples=3` |
+| `--delay` | Override jeda antar sample | `--delay=1` |
+| `--ping-count` | Override jumlah probe ping baseline | `--ping-count=5` |
+| `--ping-host` | Ganti host ping baseline | `--ping-host=1.1.1.1` |
+| `--dns=ip1,ip2` | Pakai custom DNS untuk test curl | `--dns=8.8.8.8,8.8.4.4` |
+| `--auto-contribute` | Paksa contribute aktif | `--auto-contribute` |
+| `--no-auto-contribute` | Paksa contribute nonaktif | `--no-auto-contribute` |
+
+Contoh penggunaan beberapa argumen sekaligus:
+
+```bash
+python main.py --run \
+   --targets=https://example.com,https://www.instagram.com \
+   --samples=3 \
+   --delay=1 \
+   --ping-count=3 \
+   --dns=8.8.8.8,8.8.4.4 \
+   --loc=-7.3260,112.7458 \
+   --no-auto-contribute
+```
+
+Contoh untuk cron atau server tanpa GPS:
+
+```bash
+python main.py --run --loc=-7.3260,112.7458 --dns=8.8.8.8,8.8.4.4
+```
+
+Catatan:
+- `--dns` hanya mengubah DNS untuk test request NOC Tune, bukan DNS OS.
+- Ping baseline default tetap ke `8.8.8.8` kecuali diganti dengan `--ping-host`.
+- Hasil CLI tetap disimpan ke folder session di `notebooks/results/`.
 
 ---
 
@@ -273,7 +329,7 @@ python main.py --version        # Tampilkan versi
 - 📍 **Lokasi & ISP** via IP Geolocation + Browser GPS
 
 ### Control
-- ▶️ **Run Test** - Mulai test TTFB
+- ▶️ **Jalankan Tes Sekarang** - Mulai test TTFB
 - ⏸️ **Pause** - Pause/resume test
 - ⏹️ **Stop** - Stop test
 - 🔄 **Restart** - Restart test
@@ -304,11 +360,17 @@ results/session_good_signal_5G_8-8-8-8_20260413_123456/
 ```txt
 TARGETS = https://www.instagram.com, https://example.com
 SAMPLE_COUNT = 10
+DELAY_SECONDS = 30
+PING_DURATION = 60
 AUTO_CONTRIBUTE = True
+USE_CUSTOM_DNS = True
+CUSTOM_DNS_SERVERS = 8.8.8.8, 8.8.4.4
 SIGNAL_THRESHOLD_DBM = -65
-TTFB_GOOD_MS = 200
-TTFB_WARNING_MS = 500
-ONT_DNS = 8.8.8.8
+TTFB_GOOD_MS = 600
+TTFB_WARNING_MS = 800
+MANUAL_LATITUDE = -7.3260
+MANUAL_LONGITUDE = 112.7458
+ONT_DNS =
 BRAND = indihome
 NO_INTERNET = 152606221682
 ```
@@ -317,12 +379,16 @@ NO_INTERNET = 152606221682
 | Parameter | Default | Deskripsi |
 |-----------|---------|-----------|
 | `SAMPLE_COUNT` | 10 | Jumlah pengulangan test per target |
-| `DELAY_SECONDS` | 2 | Jeda antar test (detik) |
-| `PING_DURATION` | 10 | Durasi ping test (detik) |
+| `DELAY_SECONDS` | 30 | Jeda antar test (detik) |
+| `PING_DURATION` | 60 | Durasi ping test (detik) |
 | `AUTO_CONTRIBUTE` | True | Jika aktif, setiap row selesai langsung dikirim ke QoSMic |
-| `SIGNAL_THRESHOLD_DBM` | -70 | Threshold good/bad signal |
-| `TTFB_GOOD_MS` | 200 | TTFB dianggap baik jika < nilai ini |
-| `TTFB_WARNING_MS` | 500 | TTFB dianggap warning jika < nilai ini |
+| `USE_CUSTOM_DNS` | True | Aktifkan custom DNS untuk test curl |
+| `CUSTOM_DNS_SERVERS` | `8.8.8.8, 8.8.4.4` | DNS override default untuk aktivitas #5 |
+| `SIGNAL_THRESHOLD_DBM` | -65 | Threshold good/bad signal |
+| `TTFB_GOOD_MS` | 600 | TTFB dianggap baik jika < nilai ini |
+| `TTFB_WARNING_MS` | 800 | TTFB dianggap warning jika < nilai ini |
+| `MANUAL_LATITUDE` | kosong | Latitude manual jika browser geolocation tidak dipakai |
+| `MANUAL_LONGITUDE` | kosong | Longitude manual jika browser geolocation tidak dipakai |
 
 ---
 
@@ -352,6 +418,77 @@ NO_INTERNET = 152606221682
 ---
 
 ## 🔧 Troubleshooting
+
+### Python masih versi `< 3.10`
+
+NOC Tune saat ini sebaiknya dijalankan dengan Python `3.10+`.
+
+```bash
+python --version
+```
+
+Jika hasilnya masih `< 3.10`, upgrade ke Python `3.10`, `3.11`, atau `3.12`.
+
+Contoh di macOS dengan Homebrew:
+
+```bash
+brew install python@3.11
+```
+
+Lalu recreate virtual environment:
+
+```bash
+rm -rf .venv
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+```
+
+### Homebrew belum terinstall di macOS
+
+Jika `brew` belum tersedia:
+
+```bash
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+```
+
+Setelah itu baru install Python yang lebih baru, misalnya:
+
+```bash
+brew install python@3.11
+```
+
+### Prerequisites masih bilang package Python belum terpasang
+
+Jika panel Prerequisites masih menampilkan warning seperti `missing pandas`, `matplotlib`, `tqdm`, atau `dnspython`, padahal package sudah di-install:
+
+1. Pastikan virtual environment aktif:
+
+```bash
+source .venv/bin/activate
+```
+
+2. Pastikan install dilakukan ke env project:
+
+```bash
+pip install -r requirements.txt
+pip install dnspython
+```
+
+3. Restart proses UI/server NOC Tune yang sedang berjalan.
+4. Reload browser.
+
+Checker prerequisite sekarang menampilkan interpreter aktif. Jika masih bermasalah, jalankan:
+
+```bash
+python main.py --check
+```
+
+atau:
+
+```bash
+python -c "from ui.ttfb_test_ui import check_prerequisites; print(check_prerequisites()['python_packages'])"
+```
 
 ### macOS: SSID tidak terdeteksi
 
@@ -396,7 +533,7 @@ sudo apt install curl dnsutils
 
 ## 🧪 Requirements
 
-- Python 3.8+
+- Python 3.10+
 - curl (untuk TTFB measurement)
 - Browser modern (untuk UI)
 
@@ -445,6 +582,35 @@ Contributions welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some AmazingFeature'`)
 4. Push to the branch (`git push origin feature/AmazingFeature`)
 5. Open a Pull Request
+
+### Update Fork dengan Perubahan Terbaru
+
+Jika repository Anda sudah fork dan ingin mengambil update terbaru dari repository utama:
+
+```bash
+git remote -v
+git remote add upstream https://github.com/basnugroho/noctune.git
+git fetch upstream
+git checkout main
+git merge upstream/main
+git push origin main
+```
+
+Jika remote `upstream` sudah ada, cukup jalankan:
+
+```bash
+git fetch upstream
+git checkout main
+git merge upstream/main
+git push origin main
+```
+
+Jika Anda ingin update branch feature setelah `main` terbaru masuk:
+
+```bash
+git checkout feature/nama-branch
+git merge main
+```
 
 ---
 

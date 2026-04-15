@@ -11,14 +11,43 @@
         document.addEventListener('DOMContentLoaded', () => {
             setupTabs();
             switchTab('ttfb');
-            loadConfig();
-            checkPrereqs();
-            loadNetworkInfo();
+            initializeUi();
             requestBrowserLocation();
             document.getElementById('auto-contribute').addEventListener('change', () => {
                 updateAutoContributeBadge(document.getElementById('auto-contribute').checked);
             });
+            document.getElementById('use-custom-dns').addEventListener('change', () => {
+                checkPrereqs();
+            });
         });
+
+        async function initializeUi() {
+            await loadConfig();
+            await checkPrereqs();
+            await loadNetworkInfo();
+        }
+
+        function updateRunButtonState() {
+            const runBtn = document.getElementById('run-test-btn');
+            const hint = document.getElementById('run-test-hint');
+            if (!runBtn) return;
+
+            runBtn.disabled = isRunning;
+            if (!isRunning) {
+                runBtn.innerHTML = '<span class="btn-text">Jalankan Tes Sekarang</span>';
+                runBtn.style.display = '';
+            }
+
+            if (hint) {
+                if (isRunning) {
+                    hint.textContent = 'Tes sedang berjalan. Gunakan tombol kontrol di header untuk pause, stop, atau restart.';
+                } else if (isReady) {
+                    hint.textContent = 'Sistem siap. Klik untuk langsung mulai pengukuran.';
+                } else {
+                    hint.textContent = 'Jika status belum sinkron, klik tombol ini untuk cek prerequisite ulang lalu mulai tes.';
+                }
+            }
+        }
 
         function updateAutoContributeBadge(enabled) {
             const badge = document.getElementById('auto-contribute-badge');
@@ -75,6 +104,29 @@
         function setTargetUrls(urls) {
             urlTags = (urls || []).filter(u => u && u.trim());
             renderUrlTags();
+        }
+
+        function getConfigPayload() {
+            const customDnsServers = document.getElementById('custom-dns-servers').value.trim();
+            const manualLatitude = document.getElementById('manual-latitude').value.trim();
+            const manualLongitude = document.getElementById('manual-longitude').value.trim();
+
+            return {
+                TARGETS: getTargetUrls(),
+                SAMPLE_COUNT: parseInt(document.getElementById('sample-count').value) || 5,
+                DELAY_SECONDS: parseInt(document.getElementById('delay-seconds').value) || 2,
+                PING_DURATION: parseInt(document.getElementById('ping-duration').value) || 10,
+                AUTO_CONTRIBUTE: document.getElementById('auto-contribute').checked,
+                USE_CUSTOM_DNS: document.getElementById('use-custom-dns').checked,
+                CUSTOM_DNS_SERVERS: customDnsServers,
+                TTFB_GOOD_MS: parseInt(document.getElementById('ttfb-good').value) || 200,
+                TTFB_WARNING_MS: parseInt(document.getElementById('ttfb-warning').value) || 500,
+                SIGNAL_THRESHOLD_DBM: parseInt(document.getElementById('signal-threshold').value) || -70,
+                BRAND: document.getElementById('brand').value.trim(),
+                NO_INTERNET: document.getElementById('no-internet').value.trim(),
+                MANUAL_LATITUDE: manualLatitude,
+                MANUAL_LONGITUDE: manualLongitude
+            };
         }
 
         function setupTabs() {
@@ -309,11 +361,15 @@
                 document.getElementById('ping-duration').value = config.PING_DURATION || 10;
                 document.getElementById('auto-contribute').checked = config.AUTO_CONTRIBUTE !== false;
                 updateAutoContributeBadge(config.AUTO_CONTRIBUTE !== false);
+                document.getElementById('use-custom-dns').checked = config.USE_CUSTOM_DNS !== false;
+                document.getElementById('custom-dns-servers').value = config.CUSTOM_DNS_SERVERS || '8.8.8.8, 8.8.4.4';
                 document.getElementById('ttfb-good').value = config.TTFB_GOOD_MS || 200;
                 document.getElementById('ttfb-warning').value = config.TTFB_WARNING_MS || 500;
                 document.getElementById('signal-threshold').value = config.SIGNAL_THRESHOLD_DBM || -70;
                 document.getElementById('brand').value = config.BRAND || '';
                 document.getElementById('no-internet').value = config.NO_INTERNET || '';
+                document.getElementById('manual-latitude').value = config.MANUAL_LATITUDE || '';
+                document.getElementById('manual-longitude').value = config.MANUAL_LONGITUDE || '';
             } catch (e) {
                 console.error('Error loading config:', e);
             }
@@ -327,30 +383,21 @@
             document.getElementById('ping-duration').value = 60;
             document.getElementById('auto-contribute').checked = true;
             updateAutoContributeBadge(true);
+            document.getElementById('use-custom-dns').checked = true;
+            document.getElementById('custom-dns-servers').value = '8.8.8.8, 8.8.4.4';
             document.getElementById('ttfb-good').value = 600;
             document.getElementById('ttfb-warning').value = 800;
             document.getElementById('signal-threshold').value = -65;
             document.getElementById('brand').value = '';
             document.getElementById('no-internet').value = '';
+            document.getElementById('manual-latitude').value = '';
+            document.getElementById('manual-longitude').value = '';
             addLog('Configuration reset to defaults (not saved yet)', 'info');
         }
         
         // Save config to server
         async function saveConfig() {
-            const targets = getTargetUrls();
-            
-            const config = {
-                TARGETS: targets,
-                SAMPLE_COUNT: parseInt(document.getElementById('sample-count').value) || 5,
-                DELAY_SECONDS: parseInt(document.getElementById('delay-seconds').value) || 2,
-                PING_DURATION: parseInt(document.getElementById('ping-duration').value) || 10,
-                AUTO_CONTRIBUTE: document.getElementById('auto-contribute').checked,
-                TTFB_GOOD_MS: parseInt(document.getElementById('ttfb-good').value) || 200,
-                TTFB_WARNING_MS: parseInt(document.getElementById('ttfb-warning').value) || 500,
-                SIGNAL_THRESHOLD_DBM: parseInt(document.getElementById('signal-threshold').value) || -70,
-                BRAND: document.getElementById('brand').value.trim(),
-                NO_INTERNET: document.getElementById('no-internet').value.trim()
-            };
+            const config = getConfigPayload();
             
             try {
                 const response = await fetch('/api/config', {
@@ -362,6 +409,8 @@
                 const result = await response.json();
                 if (result.success) {
                     updateAutoContributeBadge(config.AUTO_CONTRIBUTE !== false);
+                    await checkPrereqs();
+                    await loadNetworkInfo();
                     addLog('Configuration saved', 'success');
                 } else {
                     addLog('Failed to save config: ' + result.error, 'error');
@@ -374,6 +423,7 @@
         // Check prerequisites
         async function checkPrereqs() {
             const prereqList = document.getElementById('prereq-list');
+            const customDnsEnabled = document.getElementById('use-custom-dns')?.checked !== false;
             prereqList.innerHTML = `
                 <div class="prereq-item checking">
                     <span class="prereq-icon"><div class="spinner"></div></span>
@@ -391,6 +441,7 @@
                 let html = '';
                 
                 for (const [name, info] of Object.entries(prereqs)) {
+                    const isRequired = name === 'custom_dns' ? customDnsEnabled : info.required;
                     const icon = info.status === 'ok' ? '✓' : (info.status === 'warning' ? '⚠' : '✗');
                     html += `
                         <div class="prereq-item ${info.status}">
@@ -399,11 +450,11 @@
                                 <div class="prereq-name">${name}</div>
                                 <div class="prereq-message">${info.message}</div>
                             </div>
-                            <span class="prereq-badge">${info.required ? 'Required' : 'Optional'}</span>
+                            <span class="prereq-badge">${isRequired ? 'Required' : 'Optional'}</span>
                         </div>
                     `;
                     
-                    if (info.required && info.status === 'error') {
+                    if (isRequired && info.status === 'error') {
                         allRequired = false;
                     }
                 }
@@ -411,22 +462,24 @@
                 prereqList.innerHTML = html;
                 
                 const statusBadge = document.getElementById('status-badge');
-                const runBtn = document.getElementById('run-test-btn');
                 
                 if (allRequired) {
                     isReady = true;
                     statusBadge.textContent = 'Ready';
                     statusBadge.className = 'status-badge ready';
-                    runBtn.disabled = false;
                 } else {
                     isReady = false;
                     statusBadge.textContent = 'Not Ready';
                     statusBadge.className = 'status-badge not-ready';
-                    runBtn.disabled = true;
                 }
+                updateRunButtonState();
                 
             } catch (e) {
                 console.error('Error checking prereqs:', e);
+                isReady = false;
+                const statusBadge = document.getElementById('status-badge');
+                statusBadge.textContent = 'Not Ready';
+                statusBadge.className = 'status-badge not-ready';
                 prereqList.innerHTML = `
                     <div class="prereq-item error">
                         <span class="prereq-icon">✗</span>
@@ -436,19 +489,35 @@
                         </div>
                     </div>
                 `;
+                updateRunButtonState();
             }
         }
         
         // Run tests
         async function runTests() {
-            if (!isReady || isRunning) return;
+            if (isRunning) return;
+
+            if (!isReady) {
+                await checkPrereqs();
+                if (!isReady) {
+                    addLog('Prerequisites belum siap. Cek panel Prerequisites untuk item yang masih merah.', 'warning');
+                    const prereqHeader = document.getElementById('prereq-header');
+                    const prereqContent = document.getElementById('prereq-content');
+                    if (prereqHeader && prereqContent && prereqContent.classList.contains('collapsed')) {
+                        prereqHeader.classList.remove('collapsed');
+                        prereqContent.classList.remove('collapsed');
+                    }
+                    return;
+                }
+            }
             
             isRunning = true;
             isPaused = false;
             
             const runBtn = document.getElementById('run-test-btn');
-            runBtn.innerHTML = '<div class="spinner"></div> Running...';
+            runBtn.innerHTML = '<div class="spinner"></div> Menjalankan Tes...';
             runBtn.disabled = true;
+            updateRunButtonState();
             
             const statusBadge = document.getElementById('status-badge');
             statusBadge.textContent = 'Running';
@@ -458,36 +527,26 @@
             document.getElementById('control-buttons').style.display = 'flex';
             document.getElementById('pause-btn').textContent = '⏸️';
             document.getElementById('pause-btn').title = 'Pause';
-            runBtn.style.display = 'none';
             
             document.getElementById('empty-state').style.display = 'none';
             document.getElementById('test-progress').style.display = 'block';
             document.getElementById('results-section').style.display = 'none';
             
             // Get current config
-            const targets = getTargetUrls();
-            
-            const config = {
-                TARGETS: targets,
-                SAMPLE_COUNT: parseInt(document.getElementById('sample-count').value) || 5,
-                DELAY_SECONDS: parseInt(document.getElementById('delay-seconds').value) || 2,
-                PING_DURATION: parseInt(document.getElementById('ping-duration').value) || 10,
-                AUTO_CONTRIBUTE: document.getElementById('auto-contribute').checked,
-                TTFB_GOOD_MS: parseInt(document.getElementById('ttfb-good').value) || 200,
-                TTFB_WARNING_MS: parseInt(document.getElementById('ttfb-warning').value) || 500,
-                SIGNAL_THRESHOLD_DBM: parseInt(document.getElementById('signal-threshold').value) || -70,
-                BRAND: document.getElementById('brand').value.trim(),
-                NO_INTERNET: document.getElementById('no-internet').value.trim()
-            };
+            const config = getConfigPayload();
             updateAutoContributeBadge(config.AUTO_CONTRIBUTE !== false);
             
             try {
                 // Start test
-                await fetch('/api/test/start', {
+                const response = await fetch('/api/test/start', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify(config)
                 });
+                const result = await response.json();
+                if (!result.success) {
+                    throw new Error(result.error || 'Failed to start test');
+                }
                 
                 // Start polling for updates
                 pollInterval = setInterval(pollStatus, 500);
@@ -575,7 +634,7 @@
             
             // Merge browser location if available (more precise)
             const location = Object.assign({}, info.location || {});
-            if (browserLocation) {
+            if (browserLocation && location.source !== 'manual_config' && location.source !== 'cli_argument') {
                 location.lat = browserLocation.lat;
                 location.lon = browserLocation.lon;
                 location.accuracy = browserLocation.accuracy;
@@ -676,18 +735,24 @@
             html += '<div class="network-section">';
             html += '<div class="section-header">🌐 DNS</div>';
             if (info.dns_primary) {
-                html += '<div class="network-item"><label>Primary</label><div class="value">' + info.dns_primary + '</div></div>';
+                const primaryLabel = info.dns_override_enabled ? 'Test DNS' : 'Primary';
+                html += '<div class="network-item"><label>' + primaryLabel + '</label><div class="value">' + info.dns_primary + '</div></div>';
+            }
+            if (info.dns_override_enabled && info.system_dns_primary) {
+                html += '<div class="network-item"><label>System DNS</label><div class="value">' + info.system_dns_primary + '</div></div>';
             }
             if (info.dns_servers && info.dns_servers.length > 1) {
-                html += '<div class="network-item"><label>All Servers</label><div class="value small">' + info.dns_servers.join(', ') + '</div></div>';
+                const serverLabel = info.dns_override_enabled ? 'Custom Servers' : 'All Servers';
+                html += '<div class="network-item"><label>' + serverLabel + '</label><div class="value small">' + info.dns_servers.join(', ') + '</div></div>';
             }
             html += '</div>';
             
             // Location section - text only (map is persistent outside grid)
             if (location.lat || location.city) {
-                const locMethod = location.is_precise ? 'GPS (Browser)' : 'IP Geolocation';
-                const locClass = location.is_precise ? 'precise' : 'approximate';
-                const locBadge = location.is_precise ? '📍 Precise' : '📍 Approximate';
+                const isManualLocation = location.input_mode === 'manual' || location.source === 'manual_config' || location.source === 'cli_argument';
+                const locMethod = location.method || (location.is_precise ? 'GPS (Browser)' : 'IP Geolocation');
+                const locClass = isManualLocation ? 'manual' : (location.is_precise ? 'precise' : 'approximate');
+                const locBadge = isManualLocation ? '📍 Manual Input' : (location.is_precise ? '📍 Precise' : '📍 Approximate');
                 
                 html += '<div class="network-section">';
                 html += '<div class="section-header">📍 Location <span class="loc-badge ' + locClass + '">' + locBadge + '</span></div>';
@@ -1303,17 +1368,13 @@
             isRunning = false;
             isPaused = false;
             
-            const runBtn = document.getElementById('run-test-btn');
-            runBtn.innerHTML = '<span class="btn-text">▶ Run Test</span>';
-            runBtn.disabled = !isReady;
-            runBtn.style.display = '';
-            
             // Hide control buttons
             document.getElementById('control-buttons').style.display = 'none';
             
             const statusBadge = document.getElementById('status-badge');
             statusBadge.textContent = isReady ? 'Ready' : 'Not Ready';
             statusBadge.className = 'status-badge ' + (isReady ? 'ready' : 'not-ready');
+            updateRunButtonState();
 
             const hasResults = document.getElementById('results-tbody').children.length > 0;
             document.getElementById('empty-state').style.display = hasResults ? 'none' : 'block';
