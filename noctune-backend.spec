@@ -74,18 +74,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=os.path.join(project_root, 'electron', 'resources', 'icon.icns') if sys.platform == 'darwin' else None,
+    icon=None,  # Icon will be set by Electron wrapper
 )
 
-# For macOS app bundle (optional)
-if sys.platform == 'darwin':
-    app = BUNDLE(
-        exe,
-        name='NOC Tune Backend.app',
-        icon=os.path.join(project_root, 'electron', 'resources', 'icon.icns'),
-        bundle_identifier='id.solusee.noctune.backend',
-        info_plist={
-            'NSHighResolutionCapable': True,
-            'LSBackgroundOnly': True,
-        },
-    )
+# Note: macOS app bundle is handled by Electron wrapper, not PyInstaller

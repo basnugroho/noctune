@@ -99,6 +99,63 @@ Browser akan terbuka otomatis dengan tampilan:
 
 ---
 
+## 💻 Desktop App (Recommended untuk User)
+
+**Tidak perlu install Python!** Download sesuai OS Anda:
+
+| Platform | Download | Size | Status |
+|----------|----------|------|--------|
+| macOS (Apple Silicon) | [noc-tune-v1.0.0-macos-arm64.zip](https://github.com/basnugroho/noctune/releases) | ~24 MB | ✅ Available |
+| macOS (Intel) | Build via GitHub Actions | ~24 MB | 🔄 CI/CD |
+| Windows | Build via GitHub Actions | ~25 MB | 🔄 CI/CD |
+| Linux | Build via GitHub Actions | ~25 MB | 🔄 CI/CD |
+
+> 💡 **Automated Builds**: Semua platform di-build otomatis via [GitHub Actions](.github/workflows/build-desktop.yml) saat release tag dibuat.
+
+### Cara Install
+
+**macOS (Standalone Binary):**
+1. Download `.zip` dari [Releases](https://github.com/basnugroho/noctune/releases)
+2. Extract, buka Terminal di folder tersebut
+3. Jalankan: `./start-noctune.sh`
+4. Browser akan otomatis terbuka ke `http://localhost:8765`
+
+**Windows:**
+1. Download dari GitHub Actions build
+2. Extract, double-click `noctune-backend.exe`
+3. Buka browser ke `http://localhost:8765`
+
+**Linux:**
+1. Download dari GitHub Actions build
+2. `chmod +x noctune-backend && ./noctune-backend`
+3. Buka browser ke `http://localhost:8765`
+
+### Build dari Source (untuk Developer)
+
+Jika ingin build sendiri:
+
+```bash
+cd electron
+
+# Install dependencies
+npm install
+
+# Build backend Python ke executable
+./scripts/build.sh backend
+
+# Build Electron app
+./scripts/build.sh electron mac    # macOS
+./scripts/build.sh electron win    # Windows  
+./scripts/build.sh electron linux  # Linux
+
+# Atau build semua sekaligus
+./scripts/build.sh all mac
+```
+
+Output akan ada di `electron/dist/`.
+
+---
+
 ## 🔄 Flow Sederhana
 
 ```mermaid

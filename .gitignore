@@ -45,3 +45,11 @@ tools/GetSSID.app/
 
 # Generated notebook artifacts
 notebooks/precise_location.json
+# Build artifacts
+build/
+dist/
+releases/
+*.dmg
+*.exe
+*.AppImage
+*.deb
