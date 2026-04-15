@@ -3,7 +3,11 @@
   "version": "1.0.0",
   "description": "NOC Tune - Network Quality Testing Tool",
   "main": "main.js",
-  "author": "Basnugroho",
+  "homepage": "https://github.com/basnugroho/noctune",
+  "author": {
+    "name": "Baskoro Nugroho",
+    "email": "baskoro.nugroho@tif.co.id"
+  },
   "license": "MIT",
   "scripts": {
     "start": "electron .",
@@ -37,7 +41,7 @@
     "extraResources": [
       {
         "from": "../dist/noctune-backend",
-        "to": "backend"
+        "to": "backend/noctune-backend"
       },
       {
         "from": "../ui",

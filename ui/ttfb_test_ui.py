@@ -56,16 +56,72 @@ except ImportError:
 
 # Configuration
 PORT = 8766
-UI_DIR = Path(__file__).parent
-CONFIG_FILE = Path(__file__).parent.parent / "notebooks" / "config.txt"
-RESULTS_DIR = Path(__file__).parent.parent / "notebooks" / "results"
-PRECISE_LOCATION_FILE = Path(__file__).parent.parent / "notebooks" / "precise_location.json"
+NO_BROWSER = False  # Set to True when launched from Electron
+
+# Detect if running in PyInstaller bundle
+def get_base_path():
+    """Get the base path for resources, handling PyInstaller bundles."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # Running in PyInstaller bundle
+        return Path(sys._MEIPASS)
+    else:
+        # Running in normal Python environment
+        return Path(__file__).parent.parent
+
+def get_ui_path():
+    """Get the path to UI directory."""
+    if getattr(sys, 'frozen', False) and hasattr(sys, '_MEIPASS'):
+        # In bundle, UI files are at MEIPASS/ui/
+        return Path(sys._MEIPASS) / 'ui'
+    else:
+        # In dev, UI files are in the same directory as this script
+        return Path(__file__).parent
+
+def get_notebooks_path():
+    """Get the path to notebooks directory for config/results."""
+    if getattr(sys, 'frozen', False):
+        # In bundled mode, check relative to executable first
+        # Electron sets cwd to backend folder, notebooks is at ../notebooks
+        exe_path = Path(sys.executable).parent
+        notebooks_from_exe = exe_path.parent / 'notebooks'
+        if notebooks_from_exe.exists():
+            return notebooks_from_exe
+        # Fallback: try cwd/../notebooks (Electron Resources structure)
+        cwd_notebooks = Path.cwd().parent / 'notebooks'
+        if cwd_notebooks.exists():
+            return cwd_notebooks
+        # Last fallback: home directory
+        home_notebooks = Path.home() / '.noctune'
+        home_notebooks.mkdir(parents=True, exist_ok=True)
+        return home_notebooks
+    else:
+        return Path(__file__).parent.parent / "notebooks"
+
+BASE_PATH = get_base_path()
+UI_DIR = get_ui_path()
+NOTEBOOKS_PATH = get_notebooks_path()
+CONFIG_FILE = NOTEBOOKS_PATH / "config.txt"
+RESULTS_DIR = NOTEBOOKS_PATH / "results"
+PRECISE_LOCATION_FILE = NOTEBOOKS_PATH / "precise_location.json"
 TEMPLATE_FILE = UI_DIR / "templates" / "ttfb_test_ui.html"
 STATIC_DIR = UI_DIR / "static"
 STATIC_ASSETS = {
     '/static/ttfb_test_ui.css': (STATIC_DIR / 'ttfb_test_ui.css', 'text/css; charset=utf-8'),
     '/static/ttfb_test_ui.js': (STATIC_DIR / 'ttfb_test_ui.js', 'application/javascript; charset=utf-8'),
 }
+
+# Debug: print paths on startup (will show in logs)
+if getattr(sys, 'frozen', False):
+    print(f"[DEBUG] Running in frozen/bundled mode")
+    print(f"[DEBUG] sys._MEIPASS = {getattr(sys, '_MEIPASS', 'N/A')}")
+    print(f"[DEBUG] sys.executable = {sys.executable}")
+    print(f"[DEBUG] cwd = {Path.cwd()}")
+print(f"[DEBUG] UI_DIR = {UI_DIR}")
+print(f"[DEBUG] TEMPLATE_FILE = {TEMPLATE_FILE} (exists: {TEMPLATE_FILE.exists()})")
+print(f"[DEBUG] STATIC_DIR = {STATIC_DIR} (exists: {STATIC_DIR.exists()})")
+print(f"[DEBUG] NOTEBOOKS_PATH = {NOTEBOOKS_PATH} (exists: {NOTEBOOKS_PATH.exists()})")
+for path, (file_path, _) in STATIC_ASSETS.items():
+    print(f"[DEBUG] STATIC_ASSETS['{path}'] = {file_path} (exists: {file_path.exists()})")
 
 
 def load_dns_resolver_module():
@@ -468,10 +524,16 @@ def read_static_asset(request_path: str) -> tuple[bytes, str] | None:
     """Read a static UI asset from disk."""
     asset = STATIC_ASSETS.get(request_path)
     if asset is None:
+        print(f"[DEBUG] read_static_asset: '{request_path}' not found in STATIC_ASSETS keys: {list(STATIC_ASSETS.keys())}")
         return None
 
     file_path, content_type = asset
-    return file_path.read_bytes(), content_type
+    print(f"[DEBUG] read_static_asset: reading '{file_path}' (exists: {file_path.exists()})")
+    try:
+        return file_path.read_bytes(), content_type
+    except Exception as e:
+        print(f"[DEBUG] read_static_asset: error reading file: {e}")
+        return None
 
 # Global state
 test_queue = queue.Queue()
@@ -2060,9 +2122,12 @@ def main():
         url = f"http://localhost:{PORT}"
         print(f"🌐 Server running at {url}")
         print()
-        print("Opening browser...")
         
-        webbrowser.open(url)
+        if not NO_BROWSER:
+            print("Opening browser...")
+            webbrowser.open(url)
+        else:
+            print("Browser opening disabled (Electron mode)")
         
         print()
         print("Press Ctrl+C to stop the server")

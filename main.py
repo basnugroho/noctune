@@ -61,6 +61,8 @@ def main():
                        help='Check system prerequisites only')
     parser.add_argument('--port', type=int, default=8766,
                        help='Port for web UI (default: 8766)')
+    parser.add_argument('--no-browser', action='store_true',
+                       help='Do not open browser automatically (for Electron wrapper)')
     parser.add_argument('--config', type=Path, default=PROJECT_ROOT / 'notebooks' / 'config.txt',
                        help='Path to config.txt for --run mode (default: notebooks/config.txt)')
     parser.add_argument('--loc',
@@ -104,7 +106,7 @@ def main():
         run_location()
     else:
         # Default: run UI
-        run_ui(port=args.port)
+        run_ui(port=args.port, no_browser=args.no_browser)
 
 
 def run_check():
@@ -207,14 +209,15 @@ def run_terminal(
     )
 
 
-def run_ui(port: int = 8766):
+def run_ui(port: int = 8766, no_browser: bool = False):
     """Run the TTFB Test UI."""
     # Import and call the main function from ttfb_test_ui
     os.chdir(PROJECT_ROOT)
     
-    # Modify port in the module
+    # Modify port and browser settings in the module
     from ui import ttfb_test_ui
     ttfb_test_ui.PORT = port
+    ttfb_test_ui.NO_BROWSER = no_browser
     
     local_ip = get_local_ip()
     

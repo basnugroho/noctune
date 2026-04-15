@@ -53,7 +53,7 @@ function startBackend() {
             
             log.info(`Starting backend in dev mode: ${pythonPath} ${mainPath}`);
             
-            pythonProcess = spawn(pythonPath, [mainPath, '--ui', `--port=${backendPort}`], {
+            pythonProcess = spawn(pythonPath, [mainPath, '--ui', `--port=${backendPort}`, '--no-browser'], {
                 cwd: path.join(__dirname, '..'),
                 env: { ...process.env, PYTHONUNBUFFERED: '1' }
             });
@@ -72,7 +72,7 @@ function startBackend() {
                 fs.mkdirSync(notebooksPath, { recursive: true });
             }
             
-            pythonProcess = spawn(backendPath, ['--ui', `--port=${backendPort}`], {
+            pythonProcess = spawn(backendPath, ['--ui', `--port=${backendPort}`, '--no-browser'], {
                 cwd: path.dirname(backendPath),
                 env: { ...process.env }
             });
@@ -82,9 +82,13 @@ function startBackend() {
             const output = data.toString();
             log.info(`Backend: ${output}`);
             
-            // Check if server is ready
-            if (output.includes('Starting server') || output.includes(`port ${backendPort}`)) {
-                setTimeout(() => resolve(), 500);
+            // Check if server is ready - look for various ready indicators
+            if (output.includes('Server running') || 
+                output.includes('Starting server') || 
+                output.includes(`port ${backendPort}`) ||
+                output.includes('Press Ctrl+C')) {
+                // Wait a bit more then resolve
+                setTimeout(() => resolve(), 1000);
             }
         });
         
@@ -102,8 +106,29 @@ function startBackend() {
             pythonProcess = null;
         });
         
-        // Fallback: resolve after timeout
-        setTimeout(() => resolve(), 3000);
+        // Fallback: resolve after timeout with port check
+        setTimeout(async () => {
+            log.info('Fallback timeout - checking if server is ready...');
+            try {
+                const http = require('http');
+                const req = http.get(`http://localhost:${backendPort}/`, (res) => {
+                    log.info(`Port check: server responded with status ${res.statusCode}`);
+                    resolve();
+                });
+                req.on('error', (err) => {
+                    log.warn(`Port check failed: ${err.message}, resolving anyway`);
+                    resolve();
+                });
+                req.setTimeout(2000, () => {
+                    req.destroy();
+                    log.warn('Port check timeout, resolving anyway');
+                    resolve();
+                });
+            } catch (e) {
+                log.warn(`Port check error: ${e.message}, resolving anyway`);
+                resolve();
+            }
+        }, 4000);
     });
 }
 
@@ -144,11 +169,34 @@ function createWindow() {
     const appUrl = `http://localhost:${backendPort}`;
     log.info(`Loading: ${appUrl}`);
     
+    // Handle page load errors
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDesc, validatedURL) => {
+        log.error(`Page load failed: ${errorCode} - ${errorDesc} - ${validatedURL}`);
+        // Retry after delay
+        setTimeout(() => {
+            log.info(`Retrying load: ${appUrl}`);
+            mainWindow.loadURL(appUrl);
+        }, 2000);
+    });
+    
+    // Log when page finishes loading
+    mainWindow.webContents.on('did-finish-load', () => {
+        log.info('Page finished loading');
+    });
+    
+    // Log DOM ready
+    mainWindow.webContents.on('dom-ready', () => {
+        log.info('DOM ready');
+    });
+    
     mainWindow.loadURL(appUrl);
     
     // Show window when ready
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
+        
+        // Debug: Always open DevTools to see console errors
+        mainWindow.webContents.openDevTools();
         
         if (isDev) {
             mainWindow.webContents.openDevTools();

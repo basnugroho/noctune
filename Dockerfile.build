@@ -1,0 +1,24 @@
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    binutils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt pyinstaller
+
+# Copy source code
+COPY main.py .
+COPY ui/ ui/
+COPY noctune-backend.spec .
+
+# Build
+RUN pyinstaller --clean --noconfirm noctune-backend.spec
+
+# Output will be in /app/dist/
+CMD ["ls", "-la", "/app/dist/"]
