@@ -1,8 +1,15 @@
-const { app, BrowserWindow, dialog, shell } = require('electron');
+const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
 const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
+
+// App version info
+const APP_VERSION = {
+    version: '1.0.0',
+    releaseDate: 'April 16, 2026',
+    githubUrl: 'https://github.com/basnugroho/noctune'
+};
 
 // Configure logging
 log.transports.file.level = 'info';
@@ -166,39 +173,27 @@ function createWindow() {
         backgroundColor: '#0a1929'
     });
     
-    // Load the app
-    const appUrl = `http://localhost:${backendPort}`;
-    log.info(`Loading: ${appUrl}`);
+    // Load the loading screen first
+    const loadingPath = path.join(__dirname, 'loading.html');
+    log.info(`Loading splash screen: ${loadingPath}`);
+    mainWindow.loadFile(loadingPath);
     
-    // Handle page load errors
-    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDesc, validatedURL) => {
-        log.error(`Page load failed: ${errorCode} - ${errorDesc} - ${validatedURL}`);
-        // Retry after delay
-        setTimeout(() => {
-            log.info(`Retrying load: ${appUrl}`);
-            mainWindow.loadURL(appUrl);
-        }, 2000);
-    });
-    
-    // Log when page finishes loading
+    // Inject version info when loading page is ready
     mainWindow.webContents.on('did-finish-load', () => {
-        log.info('Page finished loading');
+        mainWindow.webContents.executeJavaScript(`
+            window.APP_VERSION = ${JSON.stringify(APP_VERSION)};
+            if (document.getElementById('version')) {
+                document.getElementById('version').textContent = '${APP_VERSION.version}';
+                document.getElementById('release-date').textContent = '${APP_VERSION.releaseDate}';
+            }
+        `);
     });
-    
-    // Log DOM ready
-    mainWindow.webContents.on('dom-ready', () => {
-        log.info('DOM ready');
-    });
-    
-    mainWindow.loadURL(appUrl);
     
     // Show window when ready
     mainWindow.once('ready-to-show', () => {
         mainWindow.show();
         
-        // Debug: Always open DevTools to see console errors
-        mainWindow.webContents.openDevTools();
-        
+        // Only open DevTools in development mode
         if (isDev) {
             mainWindow.webContents.openDevTools();
         }
@@ -215,19 +210,52 @@ function createWindow() {
     });
 }
 
+function loadApp() {
+    const appUrl = `http://localhost:${backendPort}`;
+    log.info(`Loading app: ${appUrl}`);
+    
+    // Handle page load errors
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDesc, validatedURL) => {
+        log.error(`Page load failed: ${errorCode} - ${errorDesc} - ${validatedURL}`);
+        // Retry after delay
+        setTimeout(() => {
+            log.info(`Retrying load: ${appUrl}`);
+            mainWindow.loadURL(appUrl);
+        }, 2000);
+    });
+    
+    mainWindow.loadURL(appUrl);
+}
+
+// IPC Handlers
+ipcMain.handle('get-version', () => {
+    return APP_VERSION;
+});
+
+ipcMain.handle('open-external', (event, url) => {
+    shell.openExternal(url);
+});
+
 // App lifecycle
 app.whenReady().then(async () => {
     log.info('NOC Tune starting...');
+    log.info(`Version: ${APP_VERSION.version}`);
     log.info(`Mode: ${isDev ? 'development' : 'production'}`);
     log.info(`Platform: ${process.platform}`);
+    
+    // Create window with loading screen first
+    createWindow();
     
     try {
         // Start Python backend
         await startBackend();
         log.info('Backend started successfully');
         
-        // Create window
-        createWindow();
+        // Give backend a moment to fully initialize
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Load the actual app
+        loadApp();
         
     } catch (err) {
         log.error('Failed to start application:', err);

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NOC Tune - Loading</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #0a1929 0%, #1a2f4a 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+        }
+        
+        .loading-container {
+            text-align: center;
+            animation: fadeIn 0.5s ease-out;
+        }
+        
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        
+        .logo {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+        
+        .app-name {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #4fc3f7;
+            margin-bottom: 0.5rem;
+            text-shadow: 0 0 20px rgba(79, 195, 247, 0.3);
+        }
+        
+        .tagline {
+            font-size: 1rem;
+            color: #90a4ae;
+            margin-bottom: 2rem;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(79, 195, 247, 0.2);
+            border-top-color: #4fc3f7;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 1.5rem;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .status {
+            font-size: 0.95rem;
+            color: #b0bec5;
+            margin-bottom: 2rem;
+        }
+        
+        .version-info {
+            position: absolute;
+            bottom: 30px;
+            text-align: center;
+            color: #607d8b;
+            font-size: 0.85rem;
+        }
+        
+        .version {
+            font-weight: 600;
+            color: #78909c;
+        }
+        
+        .release-date {
+            margin-top: 0.3rem;
+            font-size: 0.8rem;
+        }
+        
+        .update-hint {
+            margin-top: 0.5rem;
+            font-size: 0.75rem;
+            color: #546e7a;
+        }
+        
+        .update-hint a {
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        
+        .update-hint a:hover {
+            text-decoration: underline;
+        }
+    </style>
+</head>
+<body>
+    <div class="loading-container">
+        <div class="logo">🌐</div>
+        <h1 class="app-name">NOC Tune</h1>
+        <p class="tagline">Network Quality Testing Tool</p>
+        
+        <div class="spinner"></div>
+        <p class="status" id="status">Starting backend server...</p>
+    </div>
+    
+    <div class="version-info">
+        <div class="version">Version <span id="version">1.0.0</span></div>
+        <div class="release-date">Released: <span id="release-date">April 16, 2026</span></div>
+        <div class="update-hint">
+            Check for updates at <a href="#" id="github-link">GitHub</a>
+        </div>
+    </div>
+    
+    <script>
+        // Version info will be injected by Electron
+        const versionInfo = window.APP_VERSION || {
+            version: '1.0.0',
+            releaseDate: 'April 16, 2026',
+            githubUrl: 'https://github.com/basnugroho/noctune'
+        };
+        
+        document.getElementById('version').textContent = versionInfo.version;
+        document.getElementById('release-date').textContent = versionInfo.releaseDate;
+        document.getElementById('github-link').href = versionInfo.githubUrl + '/releases';
+        document.getElementById('github-link').onclick = (e) => {
+            e.preventDefault();
+            if (window.electronAPI && window.electronAPI.openExternal) {
+                window.electronAPI.openExternal(versionInfo.githubUrl + '/releases');
+            }
+        };
+        
+        // Update status messages
+        const statusMessages = [
+            'Starting backend server...',
+            'Initializing components...',
+            'Loading UI...',
+            'Almost ready...'
+        ];
+        
+        let statusIndex = 0;
+        const statusEl = document.getElementById('status');
+        
+        setInterval(() => {
+            if (statusIndex < statusMessages.length - 1) {
+                statusIndex++;
+                statusEl.textContent = statusMessages[statusIndex];
+            }
+        }, 1500);
+    </script>
+</body>
+</html>

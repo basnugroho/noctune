@@ -36,6 +36,7 @@
     "files": [
       "main.js",
       "preload.js",
+      "loading.html",
       "package.json"
     ],
     "extraResources": [
