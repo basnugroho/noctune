@@ -30,7 +30,7 @@ import queue
 import importlib
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlencode, urlparse, parse_qs
 import urllib.request
 
 try:
@@ -285,8 +285,56 @@ def apply_runtime_overrides(network_info: dict, config: dict) -> dict:
     return info
 
 
+# Mapping from plain DNS server IPs to their DoH JSON API endpoints for fallback
+DOH_ENDPOINTS = {
+    '8.8.8.8': 'https://dns.google/resolve',
+    '8.8.4.4': 'https://dns.google/resolve',
+    '1.1.1.1': 'https://cloudflare-dns.com/dns-query',
+    '1.0.0.1': 'https://cloudflare-dns.com/dns-query',
+}
+
+DOH_FALLBACK_URL = 'https://dns.google/resolve'
+
+
+def resolve_hostname_doh(hostname: str, doh_url: str = DOH_FALLBACK_URL, timeout: int = 10) -> str | None:
+    """Resolve a hostname via DNS-over-HTTPS (DoH) using the JSON API.
+
+    Returns the resolved IP address string or None on failure.
+    This bypasses ISP transparent DNS proxying because the query
+    travels over HTTPS (port 443) instead of plain DNS (port 53).
+    """
+    import ssl
+
+    params = urlencode({'name': hostname, 'type': 'A'})
+    url = f'{doh_url}?{params}'
+    req = urllib.request.Request(url, headers={
+        'Accept': 'application/json',
+        'User-Agent': 'NOCTune/1.0',
+    })
+
+    ctx = ssl.create_default_context()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
+            data = json.loads(resp.read().decode())
+            # Status 0 = NOERROR
+            if data.get('Status') != 0:
+                return None
+            for answer in data.get('Answer', []):
+                # Type 1 = A record
+                if answer.get('type') == 1:
+                    return answer.get('data')
+    except Exception:
+        return None
+    return None
+
+
 def resolve_hostname_with_dns_servers(url: str, dns_servers: list[str]) -> tuple[str, int, str, str] | None:
-    """Resolve a URL hostname via the provided DNS servers for curl --resolve."""
+    """Resolve a URL hostname via the provided DNS servers for curl --resolve.
+
+    If plain DNS (port 53) fails with NXDOMAIN (common when ISPs perform
+    transparent DNS hijacking), automatically retries via DNS-over-HTTPS
+    to bypass the interception.
+    """
     effective_dns_servers = parse_dns_servers(dns_servers)
     if not effective_dns_servers:
         return None
@@ -303,13 +351,33 @@ def resolve_hostname_with_dns_servers(url: str, dns_servers: list[str]) -> tuple
     if port is None:
         port = 443 if parsed.scheme == 'https' else 80
 
-    resolver = dns_resolver_module.Resolver(configure=False)
-    resolver.nameservers = effective_dns_servers
-    resolver.lifetime = 10
+    last_error = None
+    for server in effective_dns_servers:
+        resolver = dns_resolver_module.Resolver(configure=False)
+        resolver.nameservers = [server]
+        resolver.lifetime = 10
+        try:
+            answer = resolver.resolve(hostname, 'A')
+            resolved_ip = answer[0].to_text()
+            return hostname, port, resolved_ip, str(answer.nameserver)
+        except Exception as exc:
+            last_error = exc
 
-    answer = resolver.resolve(hostname, 'A')
-    resolved_ip = answer[0].to_text()
-    return hostname, port, resolved_ip, str(answer.nameserver)
+    # Plain DNS failed for all servers – attempt DoH fallback
+    print(f'  ⚠️  Plain DNS failed ({type(last_error).__name__}), trying DNS-over-HTTPS fallback...')
+
+    for server in effective_dns_servers:
+        doh_url = DOH_ENDPOINTS.get(server, DOH_FALLBACK_URL)
+        resolved_ip = resolve_hostname_doh(hostname, doh_url=doh_url)
+        if resolved_ip:
+            print(f'  ✅ DoH resolved {hostname} → {resolved_ip} via {doh_url}')
+            return hostname, port, resolved_ip, f'{server} (DoH)'
+    
+    # Both plain DNS and DoH failed
+    raise RuntimeError(
+        f'DNS resolution failed for {hostname} via plain DNS and DNS-over-HTTPS. '
+        f'Last error: {last_error}'
+    )
 
 
 def run_dns_trace(hostname: str, dns_server: str, timeout: int = 30) -> dict:
