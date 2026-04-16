@@ -14,6 +14,27 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 
 
+def _clean_windows_netsh_value(raw_value: str) -> str | None:
+    value = (raw_value or '').strip()
+    if not value:
+        return None
+    normalized = value.lower()
+    if normalized in {'not present', 'n/a', 'none', '-'}:
+        return None
+    return value
+
+
+def _extract_netsh_field(output: str, field_names: list[str]) -> str | None:
+    for line in output.splitlines():
+        if ':' not in line:
+            continue
+        label, value = line.split(':', 1)
+        normalized_label = re.sub(r'\s+', ' ', label).strip().lower()
+        if normalized_label in field_names:
+            return _clean_windows_netsh_value(value)
+    return None
+
+
 def check_prerequisites() -> Dict[str, Dict[str, Any]]:
     """Check system prerequisites for running tests."""
     results = {
@@ -198,28 +219,39 @@ def get_wifi_info_windows() -> Dict[str, Any]:
         'ssid': None,
         'rssi': None,
         'channel': None,
-        'band': None
+        'band': None,
+        'ssid_method': None,
     }
     
     try:
         proc = subprocess.run(['netsh', 'wlan', 'show', 'interfaces'],
                             capture_output=True, text=True, timeout=10)
-        output = proc.stdout
-        
-        match = re.search(r'SSID\s+:\s+(.+)', output)
-        if match:
-            info['ssid'] = match.group(1).strip()
-        
-        match = re.search(r'Signal\s+:\s+(\d+)%', output)
-        if match:
-            signal_pct = int(match.group(1))
-            info['rssi'] = int(-100 + (signal_pct * 0.7))
-        
-        match = re.search(r'Channel\s+:\s+(\d+)', output)
-        if match:
-            info['channel'] = int(match.group(1))
+        output = proc.stdout or proc.stderr or ''
+
+        # Windows locale can vary, but field labels still have a stable "name: value" shape.
+        ssid_value = _extract_netsh_field(output, ['ssid'])
+        if ssid_value and not ssid_value.lower().startswith('bssid'):
+            info['ssid'] = ssid_value
+            info['ssid_method'] = 'netsh'
+
+        signal_match = re.search(r'(?:signal|sinyal)\s*:\s*(\d+)%', output, flags=re.IGNORECASE)
+        if signal_match:
+            signal_pct = int(signal_match.group(1))
+            info['rssi'] = int(round(-100 + (signal_pct * 0.7)))
+
+        channel_match = re.search(r'(?:channel|kanal)\s*:\s*(\d+)', output, flags=re.IGNORECASE)
+        if channel_match:
+            info['channel'] = int(channel_match.group(1))
             info['band'] = '5GHz' if info['channel'] >= 36 else '2.4GHz'
-    except:
+
+        if not info['ssid']:
+            profile_match = re.search(r'Profile\s*:\s*(.+)', output, flags=re.IGNORECASE)
+            if profile_match:
+                profile_value = _clean_windows_netsh_value(profile_match.group(1))
+                if profile_value:
+                    info['ssid'] = profile_value
+                    info['ssid_method'] = 'netsh-profile'
+    except Exception:
         pass
     
     return info
@@ -336,6 +368,7 @@ def detect_network_info(precise_location_file: Optional[Path] = None) -> Dict[st
     """Detect all network information."""
     info = {
         'wifi_ssid': None,
+        'wifi_ssid_method': None,
         'wifi_rssi': None,
         'wifi_band': None,
         'wifi_channel': None,
@@ -355,6 +388,7 @@ def detect_network_info(precise_location_file: Optional[Path] = None) -> Dict[st
         wifi = {'ssid': None, 'rssi': None, 'channel': None, 'band': None}
     
     info['wifi_ssid'] = wifi.get('ssid')
+    info['wifi_ssid_method'] = wifi.get('ssid_method')
     info['wifi_rssi'] = wifi.get('rssi')
     info['wifi_channel'] = wifi.get('channel')
     info['wifi_band'] = wifi.get('band')

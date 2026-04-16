@@ -110,6 +110,27 @@ STATIC_ASSETS = {
     '/static/ttfb_test_ui.js': (STATIC_DIR / 'ttfb_test_ui.js', 'application/javascript; charset=utf-8'),
 }
 
+
+def clean_windows_netsh_value(raw_value):
+    value = (raw_value or '').strip()
+    if not value:
+        return None
+    normalized = value.lower()
+    if normalized in {'not present', 'n/a', 'none', '-'}:
+        return None
+    return value
+
+
+def extract_windows_netsh_field(output, field_names):
+    for line in output.splitlines():
+        if ':' not in line:
+            continue
+        label, value = line.split(':', 1)
+        normalized_label = re.sub(r'\s+', ' ', label).strip().lower()
+        if normalized_label in field_names:
+            return clean_windows_netsh_value(value)
+    return None
+
 # Debug: print paths on startup (will show in logs)
 if getattr(sys, 'frozen', False):
     print(f"[DEBUG] Running in frozen/bundled mode")
@@ -944,6 +965,7 @@ def detect_network_info() -> dict:
         'battery_level': None,
         'battery_charging': None,
         'wifi_ssid': None,
+        'wifi_ssid_method': None,
         'wifi_rssi': None,
         'wifi_band': None,
         'wifi_channel': None,
@@ -1173,22 +1195,31 @@ def detect_network_info() -> dict:
         try:
             proc = subprocess.run(['netsh', 'wlan', 'show', 'interfaces'],
                                 capture_output=True, text=True, timeout=10)
-            output = proc.stdout
-            
-            match = re.search(r'SSID\s+:\s+(.+)', output)
-            if match:
-                info['wifi_ssid'] = match.group(1).strip()
-            
-            match = re.search(r'Signal\s+:\s+(\d+)%', output)
-            if match:
-                signal_pct = int(match.group(1))
-                info['wifi_rssi'] = int(-100 + (signal_pct * 0.7))
-            
-            match = re.search(r'Channel\s+:\s+(\d+)', output)
-            if match:
-                info['wifi_channel'] = int(match.group(1))
+            output = proc.stdout or proc.stderr or ''
+
+            ssid_value = extract_windows_netsh_field(output, ['ssid'])
+            if ssid_value and not ssid_value.lower().startswith('bssid'):
+                info['wifi_ssid'] = ssid_value
+                info['wifi_ssid_method'] = 'netsh'
+
+            signal_match = re.search(r'(?:signal|sinyal)\s*:\s*(\d+)%', output, flags=re.IGNORECASE)
+            if signal_match:
+                signal_pct = int(signal_match.group(1))
+                info['wifi_rssi'] = int(round(-100 + (signal_pct * 0.7)))
+
+            channel_match = re.search(r'(?:channel|kanal)\s*:\s*(\d+)', output, flags=re.IGNORECASE)
+            if channel_match:
+                info['wifi_channel'] = int(channel_match.group(1))
                 info['wifi_band'] = '5GHz' if info['wifi_channel'] >= 36 else '2.4GHz'
-        except:
+
+            if not info['wifi_ssid']:
+                profile_match = re.search(r'Profile\s*:\s*(.+)', output, flags=re.IGNORECASE)
+                if profile_match:
+                    profile_value = clean_windows_netsh_value(profile_match.group(1))
+                    if profile_value:
+                        info['wifi_ssid'] = profile_value
+                        info['wifi_ssid_method'] = 'netsh-profile'
+        except Exception:
             pass
         
         try:

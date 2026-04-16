@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import urllib.error
 import urllib.request
 from datetime import datetime
 from typing import Callable
@@ -42,6 +43,7 @@ def build_export_rows(results_payload: dict) -> list[dict]:
         return []
 
     session_id = results_payload.get('session_id', datetime.now().strftime('%Y%m%d_%H%M%S'))
+    test_start_time = results_payload.get('start_time') or datetime.now().isoformat()
     network_info = results_payload.get('network_info', {}) or {}
     location = network_info.get('location', {}) or {}
     config = results_payload.get('config', {}) or {}
@@ -55,9 +57,9 @@ def build_export_rows(results_payload: dict) -> list[dict]:
 
         row = {
             'session_id': session_id,
-            'test_start_time': results_payload.get('start_time', ''),
-            'test_end_time': results_payload.get('end_time', ''),
-            'timestamp': result.get('timestamp', ''),
+            'test_start_time': test_start_time,
+            'test_end_time': results_payload.get('end_time') or result.get('timestamp') or datetime.now().isoformat(),
+            'timestamp': result.get('timestamp') or datetime.now().isoformat(),
             'time_short': result.get('time_short', ''),
             'target_name': result.get('target_name', ''),
             'brand': config.get('BRAND') or None,
@@ -92,8 +94,8 @@ def build_export_rows(results_payload: dict) -> list[dict]:
             'location_city': location.get('city'),
             'location_region': location.get('region'),
             'location_country': location.get('country'),
-            'location_lat': location.get('lat'),
-            'location_lon': location.get('lon'),
+            'location_lat': location.get('latitude', location.get('lat')),
+            'location_lon': location.get('longitude', location.get('lon')),
             'location_accuracy': location.get('accuracy'),
             'location_altitude': location.get('altitude'),
             'location_altitude_accuracy': location.get('altitude_accuracy'),
@@ -144,11 +146,25 @@ def normalize_sql_datetime(value):
     return value
 
 
+def normalize_contribution_value(value):
+    """Convert nested or UI-only values into API-safe primitives."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, str):
+        value = value.strip()
+        return value or None
+    return value
+
+
 def build_contribution_row(row: dict) -> dict:
     """Normalize one export row for the remote contribute API."""
     normalized = dict(row)
     for key in ['test_start_time', 'test_end_time', 'timestamp', 'location_browser_timestamp', 'location_saved_at']:
         normalized[key] = normalize_sql_datetime(normalized.get(key))
+    for key, value in list(normalized.items()):
+        normalized[key] = normalize_contribution_value(value)
     return normalized
 
 
@@ -227,14 +243,35 @@ def submit_contribution_row(
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=20):
-            pass
+        with urllib.request.urlopen(request, timeout=20) as response:
+            status_code = getattr(response, 'status', 200)
+            response_text = response.read().decode('utf-8', errors='replace') if hasattr(response, 'read') else ''
+        if status_code >= 400:
+            raise RuntimeError(f'HTTP {status_code}: {response_text}')
         if log_callback:
             log_callback(
                 f"Contribute row {index}/{total} OK: {row.get('target_name')} sample #{row.get('sample_num')}",
                 'success',
             )
         return True, ''
+    except urllib.error.HTTPError as e:
+        response_text = ''
+        try:
+            response_text = e.read().decode('utf-8', errors='replace')
+        except Exception:
+            response_text = ''
+        if is_duplicate_contribution_error(response_text):
+            if log_callback:
+                log_callback(
+                    f"Contribute row {index}/{total} SKIP (already submitted): {row.get('target_name')} sample #{row.get('sample_num')}",
+                    'info',
+                )
+            return True, ''
+        error_suffix = f" | Response: {response_text}" if response_text else ''
+        error_message = f"Row {index} failed for {row.get('target_name')} sample #{row.get('sample_num')}: HTTP {e.code}{error_suffix}"
+        if log_callback:
+            log_callback(error_message, 'error')
+        return False, error_message
     except Exception as e:
         response_text = ''
         if hasattr(e, 'read'):

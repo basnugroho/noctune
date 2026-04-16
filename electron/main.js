@@ -1,5 +1,5 @@
 const { app, BrowserWindow, dialog, shell, ipcMain } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
@@ -22,9 +22,26 @@ log.transports.console.level = 'debug';
 let mainWindow;
 let pythonProcess = null;
 let backendPort = 8765;
+const BACKEND_HEALTH_MAX_ATTEMPTS = process.platform === 'win32' ? 120 : 30;
+const BACKEND_HEALTH_INTERVAL_MS = 500;
 
 // Determine if we're in development or production
 const isDev = process.env.NODE_ENV === 'development';
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+    app.quit();
+}
+
+app.on('second-instance', () => {
+    if (mainWindow) {
+        if (mainWindow.isMinimized()) {
+            mainWindow.restore();
+        }
+        mainWindow.focus();
+    }
+});
 
 function getResourcePath(relativePath) {
     if (isDev) {
@@ -54,8 +71,37 @@ function getBackendPath() {
     }
 }
 
+function cleanupStaleBackendProcesses() {
+    if (isDev || process.platform !== 'win32') {
+        return;
+    }
+
+    try {
+        const result = spawnSync('taskkill', ['/im', 'noctune-backend.exe', '/f'], {
+            windowsHide: true,
+            encoding: 'utf8'
+        });
+
+        if (result.status === 0) {
+            log.info('Stopped stale noctune-backend.exe process before startup');
+            return;
+        }
+
+        const output = `${result.stdout || ''}${result.stderr || ''}`.toLowerCase();
+        if (output.includes('no running instance') || output.includes('not found') || output.includes('tidak ditemukan')) {
+            return;
+        }
+
+        if (output.trim()) {
+            log.warn(`taskkill returned status ${result.status}: ${output.trim()}`);
+        }
+    } catch (err) {
+        log.warn(`Failed to clean up stale backend process: ${err.message}`);
+    }
+}
+
 // Health check function to verify backend is ready
-function checkBackendHealth(maxAttempts = 30, intervalMs = 500) {
+function checkBackendHealth(maxAttempts = BACKEND_HEALTH_MAX_ATTEMPTS, intervalMs = BACKEND_HEALTH_INTERVAL_MS) {
     return new Promise((resolve, reject) => {
         const http = require('http');
         let attempts = 0;
@@ -116,6 +162,8 @@ function startBackend() {
                 reject(new Error(`Backend not found at: ${backendPath}`));
                 return;
             }
+
+            cleanupStaleBackendProcesses();
             
             log.info(`Starting backend: ${backendPath}`);
             
@@ -155,8 +203,8 @@ function startBackend() {
         });
 
         // Use active health check to detect when backend is ready
-        log.info('Starting health check...');
-        checkBackendHealth(30, 500)
+        log.info(`Starting health check (timeout ${Math.round(BACKEND_HEALTH_MAX_ATTEMPTS * BACKEND_HEALTH_INTERVAL_MS / 1000)}s)...`);
+        checkBackendHealth()
             .then(() => {
                 log.info('Backend is ready!');
                 resolve();

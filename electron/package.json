@@ -1,6 +1,6 @@
 {
   "name": "noc-tune",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "NOC Tune - Network Quality Testing Tool",
   "main": "main.js",
   "homepage": "https://github.com/basnugroho/noctune",
@@ -29,6 +29,7 @@
   "build": {
     "appId": "id.solusee.noctune",
     "productName": "NOC Tune",
+    "artifactName": "NOC-Tune-${version}-${os}-${arch}.${ext}",
     "directories": {
       "output": "dist",
       "buildResources": "resources"
@@ -96,7 +97,9 @@
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
+      "allowToChangeInstallationDirectory": false,
+      "shortcutName": "NOC Tune",
+      "uninstallDisplayName": "NOC Tune",
       "createDesktopShortcut": true
     }
   }
