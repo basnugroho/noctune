@@ -31,15 +31,16 @@ function getBackendPath() {
         return null; // Will use python command
     }
 
-    // Production: use bundled executable
+    // Production: use bundled executable (single file from PyInstaller --onefile)
     const platform = process.platform;
-    let execName = 'noctune-backend';
     
     if (platform === 'win32') {
-        execName = 'noctune-backend.exe';
+        // Windows: resources/backend/noctune-backend.exe
+        return path.join(process.resourcesPath, 'backend', 'noctune-backend.exe');
+    } else {
+        // macOS/Linux: resources/backend/noctune-backend
+        return path.join(process.resourcesPath, 'backend', 'noctune-backend');
     }
-    
-    return path.join(process.resourcesPath, 'backend', execName);
 }
 
 function startBackend() {
