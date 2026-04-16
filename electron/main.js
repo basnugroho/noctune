@@ -89,15 +89,6 @@ function startBackend() {
         pythonProcess.stdout.on('data', (data) => {
             const output = data.toString();
             log.info(`Backend: ${output}`);
-            
-            // Check if server is ready - look for various ready indicators
-            if (output.includes('Server running') || 
-                output.includes('Starting server') || 
-                output.includes(`port ${backendPort}`) ||
-                output.includes('Press Ctrl+C')) {
-                // Wait a bit more then resolve
-                setTimeout(() => resolve(), 1000);
-            }
         });
         
         pythonProcess.stderr.on('data', (data) => {
@@ -114,29 +105,52 @@ function startBackend() {
             pythonProcess = null;
         });
         
-        // Fallback: resolve after timeout with port check
-        setTimeout(async () => {
-            log.info('Fallback timeout - checking if server is ready...');
-            try {
-                const http = require('http');
-                const req = http.get(`http://localhost:${backendPort}/`, (res) => {
-                    log.info(`Port check: server responded with status ${res.statusCode}`);
+        // Resolve immediately - we'll check health separately
+        setTimeout(() => resolve(), 500);
+    });
+}
+
+// Health check function - retry until backend is ready
+function waitForBackend(maxRetries = 30, retryInterval = 500) {
+    return new Promise((resolve, reject) => {
+        const http = require('http');
+        let attempts = 0;
+        
+        function checkHealth() {
+            attempts++;
+            log.info(`Health check attempt ${attempts}/${maxRetries}...`);
+            
+            const req = http.get(`http://localhost:${backendPort}/`, (res) => {
+                if (res.statusCode === 200) {
+                    log.info(`Backend is ready! (status: ${res.statusCode})`);
                     resolve();
-                });
-                req.on('error', (err) => {
-                    log.warn(`Port check failed: ${err.message}, resolving anyway`);
-                    resolve();
-                });
-                req.setTimeout(2000, () => {
-                    req.destroy();
-                    log.warn('Port check timeout, resolving anyway');
-                    resolve();
-                });
-            } catch (e) {
-                log.warn(`Port check error: ${e.message}, resolving anyway`);
-                resolve();
+                } else {
+                    retryOrFail();
+                }
+            });
+            
+            req.on('error', (err) => {
+                log.debug(`Health check failed: ${err.message}`);
+                retryOrFail();
+            });
+            
+            req.setTimeout(2000, () => {
+                req.destroy();
+                retryOrFail();
+            });
+        }
+        
+        function retryOrFail() {
+            if (attempts < maxRetries) {
+                setTimeout(checkHealth, retryInterval);
+            } else {
+                log.error(`Backend did not become ready after ${maxRetries} attempts`);
+                reject(new Error('Backend failed to start - timeout waiting for server'));
             }
-        }, 4000);
+        }
+        
+        // Start checking
+        checkHealth();
     });
 }
 
@@ -247,12 +261,14 @@ app.whenReady().then(async () => {
     createWindow();
     
     try {
-        // Start Python backend
+        // Start Python backend process
         await startBackend();
-        log.info('Backend started successfully');
+        log.info('Backend process started');
         
-        // Give backend a moment to fully initialize
-        await new Promise(resolve => setTimeout(resolve, 500));
+        // Wait for backend to be ready (health check with retries)
+        log.info('Waiting for backend to be ready...');
+        await waitForBackend(30, 500); // 30 retries, 500ms interval = max 15 seconds
+        log.info('Backend is ready!');
         
         // Load the actual app
         loadApp();
