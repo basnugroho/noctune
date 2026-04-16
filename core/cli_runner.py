@@ -260,7 +260,7 @@ def run_cli_tests(
     system_dns_servers = network_info.get('system_dns_servers', [])
     
     def cli_log(msg, level='info'):
-        level_icons = {'info': 'ℹ️', 'success': '✅', 'warning': '⚠️', 'error': '❌'}
+        level_icons = {'info': '[i]', 'success': '[OK]', 'warning': '[!]', 'error': '[X]'}
         icon = level_icons.get(level, ' ')
         print(f"  {icon} {msg}")
     

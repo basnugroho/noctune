@@ -4,6 +4,10 @@ const path = require('path');
 const fs = require('fs');
 const log = require('electron-log');
 
+// Disable GPU acceleration for servers without proper GPU drivers
+app.disableHardwareAcceleration();
+app.commandLine.appendSwitch('disable-gpu');
+
 // App version info
 const APP_VERSION = {
     version: '1.0.0',
@@ -50,6 +54,47 @@ function getBackendPath() {
     }
 }
 
+// Health check function to verify backend is ready
+function checkBackendHealth(maxAttempts = 30, intervalMs = 500) {
+    return new Promise((resolve, reject) => {
+        const http = require('http');
+        let attempts = 0;
+        
+        const check = () => {
+            attempts++;
+            log.info(`Health check attempt ${attempts}/${maxAttempts}...`);
+            
+            const req = http.get(`http://127.0.0.1:${backendPort}/`, (res) => {
+                log.info(`Backend health check passed (status ${res.statusCode})`);
+                resolve(true);
+            });
+            
+            req.on('error', (err) => {
+                log.warn(`Health check error: ${err.code} - ${err.message}`);
+                if (attempts >= maxAttempts) {
+                    log.error(`Backend health check failed after ${maxAttempts} attempts`);
+                    reject(new Error(`Backend did not start within ${maxAttempts * intervalMs / 1000} seconds`));
+                } else {
+                    setTimeout(check, intervalMs);
+                }
+            });
+            
+            req.setTimeout(1000, () => {
+                req.destroy();
+                log.warn(`Health check timeout at attempt ${attempts}`);
+                if (attempts >= maxAttempts) {
+                    reject(new Error(`Backend health check timeout after ${maxAttempts} attempts`));
+                } else {
+                    setTimeout(check, intervalMs);
+                }
+            });
+        };
+        
+        // Start checking after a brief delay
+        setTimeout(check, 500);
+    });
+}
+
 function startBackend() {
     return new Promise((resolve, reject) => {
         const backendPath = getBackendPath();
@@ -82,7 +127,7 @@ function startBackend() {
             
             pythonProcess = spawn(backendPath, ['--ui', `--port=${backendPort}`, '--no-browser'], {
                 cwd: path.dirname(backendPath),
-                env: { ...process.env }
+                env: { ...process.env, PYTHONUNBUFFERED: '1' }
             });
         }
         
@@ -103,54 +148,23 @@ function startBackend() {
         pythonProcess.on('close', (code) => {
             log.info(`Backend exited with code ${code}`);
             pythonProcess = null;
-        });
-        
-        // Resolve immediately - we'll check health separately
-        setTimeout(() => resolve(), 500);
-    });
-}
-
-// Health check function - retry until backend is ready
-function waitForBackend(maxRetries = 30, retryInterval = 500) {
-    return new Promise((resolve, reject) => {
-        const http = require('http');
-        let attempts = 0;
-        
-        function checkHealth() {
-            attempts++;
-            log.info(`Health check attempt ${attempts}/${maxRetries}...`);
-            
-            const req = http.get(`http://localhost:${backendPort}/`, (res) => {
-                if (res.statusCode === 200) {
-                    log.info(`Backend is ready! (status: ${res.statusCode})`);
-                    resolve();
-                } else {
-                    retryOrFail();
-                }
-            });
-            
-            req.on('error', (err) => {
-                log.debug(`Health check failed: ${err.message}`);
-                retryOrFail();
-            });
-            
-            req.setTimeout(2000, () => {
-                req.destroy();
-                retryOrFail();
-            });
-        }
-        
-        function retryOrFail() {
-            if (attempts < maxRetries) {
-                setTimeout(checkHealth, retryInterval);
-            } else {
-                log.error(`Backend did not become ready after ${maxRetries} attempts`);
-                reject(new Error('Backend failed to start - timeout waiting for server'));
+            // If backend exits before health check succeeds, reject
+            if (code !== 0) {
+                reject(new Error(`Backend exited with code ${code}`));
             }
-        }
-        
-        // Start checking
-        checkHealth();
+        });
+
+        // Use active health check to detect when backend is ready
+        log.info('Starting health check...');
+        checkBackendHealth(30, 500)
+            .then(() => {
+                log.info('Backend is ready!');
+                resolve();
+            })
+            .catch((err) => {
+                log.error(`Backend health check failed: ${err.message}`);
+                reject(err);
+            });
     });
 }
 
@@ -225,7 +239,7 @@ function createWindow() {
 }
 
 function loadApp() {
-    const appUrl = `http://localhost:${backendPort}`;
+    const appUrl = `http://127.0.0.1:${backendPort}`;
     log.info(`Loading app: ${appUrl}`);
     
     // Handle page load errors
@@ -261,14 +275,9 @@ app.whenReady().then(async () => {
     createWindow();
     
     try {
-        // Start Python backend process
+        // Start Python backend and wait until it is reachable
         await startBackend();
-        log.info('Backend process started');
-        
-        // Wait for backend to be ready (health check with retries)
-        log.info('Waiting for backend to be ready...');
-        await waitForBackend(30, 500); // 30 retries, 500ms interval = max 15 seconds
-        log.info('Backend is ready!');
+        log.info('Backend started successfully');
         
         // Load the actual app
         loadApp();

@@ -15,7 +15,20 @@ Usage:
 
 import sys
 import os
+import io
 from pathlib import Path
+
+# Fix Windows console encoding for Unicode characters (emojis, etc.)
+if sys.platform == 'win32':
+    try:
+        # Force UTF-8 encoding with error replacement for console output
+        if hasattr(sys.stdout, 'buffer'):
+            sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+        if hasattr(sys.stderr, 'buffer'):
+            sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8', errors='replace', line_buffering=True)
+    except Exception:
+        # If wrapping fails, continue without it
+        pass
 
 # Add the project directory to path
 PROJECT_ROOT = Path(__file__).parent.absolute()
@@ -113,7 +126,7 @@ def run_check():
     """Check system prerequisites."""
     from core.network import check_prerequisites
     
-    print("🔍 Checking system prerequisites...\n")
+    print("[*] Checking system prerequisites...\n")
     
     results = check_prerequisites()
     
@@ -124,11 +137,11 @@ def run_check():
         required = info.get('required', True)
         
         if status == 'ok':
-            icon = '✓'
+            icon = '[OK]'
         elif status == 'warning':
-            icon = '⚠'
+            icon = '[!]'
         else:
-            icon = '✗'
+            icon = '[X]'
             if required:
                 all_ok = False
         
@@ -137,9 +150,9 @@ def run_check():
     
     print()
     if all_ok:
-        print("✓ All required prerequisites are met!")
+        print("[OK] All required prerequisites are met!")
     else:
-        print("✗ Some required prerequisites are missing.")
+        print("[X] Some required prerequisites are missing.")
         sys.exit(1)
 
 
@@ -221,13 +234,14 @@ def run_ui(port: int = 8766, no_browser: bool = False):
     
     local_ip = get_local_ip()
     
-    print(f"🚀 Starting NOC Tune TTFB Test UI on port {port}...")
-    print()
-    print(f"   📍 Local:   http://localhost:{port}")
-    print(f"   🌐 Network: http://{local_ip}:{port}")
-    print()
-    print("   💡 Other devices on the same network can access via the Network URL")
-    print("   Press Ctrl+C to stop\n")
+    print(f"[*] Starting NOC Tune TTFB Test UI on port {port}...", flush=True)
+    print("", flush=True)
+    print(f"    Local:   http://localhost:{port}", flush=True)
+    print(f"    Network: http://{local_ip}:{port}", flush=True)
+    print("", flush=True)
+    print("    Other devices on the same network can access via the Network URL", flush=True)
+    print("    Press Ctrl+C to stop", flush=True)
+    print("", flush=True)
     
     # Call the main function
     if hasattr(ttfb_test_ui, 'main'):
@@ -245,7 +259,7 @@ def run_ui(port: int = 8766, no_browser: bool = False):
             try:
                 httpd.serve_forever()
             except KeyboardInterrupt:
-                print("\n\n👋 Goodbye!")
+                print("\n\nGoodbye!")
 
 
 if __name__ == '__main__':

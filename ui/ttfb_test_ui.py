@@ -803,9 +803,9 @@ def add_log(message: str, level: str = 'info'):
     })
     # Mirror to terminal
     if level == 'divider':
-        print(f'  {"─" * 50}')
+        print(f'  {"-" * 50}')
     elif message:
-        level_icons = {'info': 'ℹ️', 'success': '✅', 'warning': '⚠️', 'error': '❌'}
+        level_icons = {'info': '[i]', 'success': '[OK]', 'warning': '[!]', 'error': '[X]'}
         icon = level_icons.get(level, ' ')
         print(f'  {icon}  {message}')
 
@@ -1429,7 +1429,7 @@ def run_tests(config: dict):
                 
                 # Check for pause
                     if test_paused:
-                        print(f'  ⏸️  Test paused...')
+                        print(f'  [PAUSED] Test paused...')
                     while test_paused and not test_stopped:
                         time.sleep(0.5)
                     if not test_paused and not test_stopped and sample_num > 1:
@@ -1475,9 +1475,9 @@ def run_tests(config: dict):
                 
                 # Log result
                     if result['ttfb_ms']:
-                        status_icon = {'good': '✓', 'warning': '⚠', 'poor': '✗'}.get(result['status'], '?')
+                        status_icon = {'good': '[OK]', 'warning': '[!]', 'poor': '[X]'}.get(result['status'], '?')
                         log_level = {'good': 'success', 'warning': 'warning', 'poor': 'error'}.get(result['status'], 'info')
-                        add_log(f"  Sample {sample_num}/{sample_count} [{dns_label}]: {result['ttfb_ms']}ms [{status_icon}]", log_level)
+                        add_log(f"  Sample {sample_num}/{sample_count} [{dns_label}]: {result['ttfb_ms']}ms {status_icon}", log_level)
                     else:
                         add_log(f"  Sample {sample_num}/{sample_count} [{dns_label}]: ERROR - {result.get('error', 'Unknown')}", 'error')
                 
@@ -1486,7 +1486,7 @@ def run_tests(config: dict):
                     pct = int(done / total_samples * 100)
                     bar_len = 30
                     filled = int(bar_len * done / total_samples)
-                    bar = '█' * filled + '░' * (bar_len - filled)
+                    bar = '#' * filled + '-' * (bar_len - filled)
                     elapsed = test_results['elapsed_seconds']
                     eta = (elapsed / done * (total_samples - done)) if done > 0 else 0
                     print(f'\r  [{bar}] {pct}% ({done}/{total_samples}) ETA: {int(eta)}s  ', end='', flush=True)
@@ -1589,9 +1589,9 @@ def run_tests(config: dict):
         # Clear progress bar line
         print()
         add_log('', 'divider')
-        add_log('✓ All tests completed!', 'success')
+        add_log('[OK] All tests completed!', 'success')
         elapsed_total = (datetime.now() - test_results['_start_time_obj']).total_seconds()
-        print(f'  ⏱️  Total time: {int(elapsed_total)}s')
+        print(f'  Total time: {int(elapsed_total)}s')
         
     except Exception as e:
         add_log(f"Test error: {e}", 'error')
@@ -1941,7 +1941,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                     test_stopped = False
                     targets = config.get('TARGETS', [])
                     samples = config.get('SAMPLE_COUNT', 5)
-                    print(f'\n🚀 Test started: {len(targets)} target(s) × {samples} samples = {len(targets) * samples} total')
+                    print(f'\n[*] Test started: {len(targets)} target(s) x {samples} samples = {len(targets) * samples} total')
                     # Start test in background thread
                     thread = threading.Thread(target=run_tests, args=(config,), daemon=True)
                     thread.start()
@@ -1951,13 +1951,13 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
         
         elif self.path == '/api/test/pause':
             test_paused = not test_paused
-            state = '⏸️  Test PAUSED' if test_paused else '▶️  Test RESUMED'
+            state = '[PAUSED] Test PAUSED' if test_paused else '[>] Test RESUMED'
             print(f'\n  {state}')
             self.send_json({'success': True, 'paused': test_paused})
         
         elif self.path == '/api/test/stop':
             test_stopped = True
-            print(f'\n  ⏹️  Test STOPPED by user')
+            print(f'\n  [STOPPED] Test STOPPED by user')
             self.send_json({'success': True})
 
         elif self.path == '/api/contribute':
@@ -2088,7 +2088,7 @@ def cleanup_existing_server(port: int) -> list[int]:
 
 def main():
     print("=" * 60)
-    print("🔧 NOC Tune - TTFB Test UI")
+    print("NOC Tune - TTFB Test UI")
     print("=" * 60)
     print()
     
@@ -2097,7 +2097,7 @@ def main():
 
     killed_pids = cleanup_existing_server(PORT)
     if killed_pids:
-        print(f"🧹 Freed port {PORT} by stopping existing process(es): {', '.join(str(pid) for pid in killed_pids)}")
+        print(f"[*] Freed port {PORT} by stopping existing process(es): {', '.join(str(pid) for pid in killed_pids)}")
         print()
     
     # Start server with SO_REUSEADDR
@@ -2110,7 +2110,7 @@ def main():
         if getattr(e, 'errno', None) == 48:
             killed_pids = cleanup_existing_server(PORT)
             if killed_pids:
-                print(f"🧹 Retrying after stopping process(es): {', '.join(str(pid) for pid in killed_pids)}")
+                print(f"[*] Retrying after stopping process(es): {', '.join(str(pid) for pid in killed_pids)}")
                 print()
                 httpd = ReusableTCPServer(("", PORT), TTFBHandler)
             else:
@@ -2120,23 +2120,29 @@ def main():
 
     with httpd:
         url = f"http://localhost:{PORT}"
-        print(f"🌐 Server running at {url}")
-        print()
+        print(f"[*] Server running at {url}", flush=True)
+        print("", flush=True)
         
         if not NO_BROWSER:
-            print("Opening browser...")
+            print("Opening browser...", flush=True)
             webbrowser.open(url)
         else:
-            print("Browser opening disabled (Electron mode)")
+            print("Browser opening disabled (Electron mode)", flush=True)
         
-        print()
-        print("Press Ctrl+C to stop the server")
-        print()
+        print("", flush=True)
+        print("Press Ctrl+C to stop the server", flush=True)
+        print("", flush=True)
         
         try:
+            print("[DEBUG] Starting serve_forever()...", flush=True)
             httpd.serve_forever()
+            print("[DEBUG] serve_forever() returned normally", flush=True)
         except KeyboardInterrupt:
             print("\n\nShutting down server...")
+        except Exception as e:
+            print(f"[ERROR] Server error: {e}", flush=True)
+            import traceback
+            traceback.print_exc()
 
 
 if __name__ == "__main__":

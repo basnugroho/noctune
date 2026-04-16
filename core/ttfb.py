@@ -198,9 +198,9 @@ def run_batch_ttfb_test(
             
             if on_progress:
                 if result['ttfb_ms']:
-                    status_icon = {'good': '✓', 'warning': '⚠', 'poor': '✗'}.get(result['status'], '?')
+                    status_icon = {'good': '[OK]', 'warning': '[!]', 'poor': '[X]'}.get(result['status'], '?')
                     level = {'good': 'success', 'warning': 'warning', 'poor': 'error'}.get(result['status'], 'info')
-                    on_progress(f"  Sample {sample_num}/{sample_count}: {result['ttfb_ms']}ms [{status_icon}]", level)
+                    on_progress(f"  Sample {sample_num}/{sample_count}: {result['ttfb_ms']}ms {status_icon}", level)
                 else:
                     on_progress(f"  Sample {sample_num}/{sample_count}: ERROR - {result.get('error', 'Unknown')}", 'error')
             

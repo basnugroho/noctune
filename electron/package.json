@@ -41,10 +41,6 @@
     ],
     "extraResources": [
       {
-        "from": "../dist/noctune-backend",
-        "to": "backend/noctune-backend"
-      },
-      {
         "from": "../ui",
         "to": "ui"
       },
@@ -55,6 +51,12 @@
       }
     ],
     "mac": {
+      "extraResources": [
+        {
+          "from": "../dist/noctune-backend",
+          "to": "backend/noctune-backend"
+        }
+      ],
       "category": "public.app-category.utilities",
       "icon": "resources/icon.icns",
       "target": [
@@ -67,6 +69,12 @@
       "gatekeeperAssess": false
     },
     "win": {
+      "extraResources": [
+        {
+          "from": "../dist/noctune-backend.exe",
+          "to": "backend/noctune-backend.exe"
+        }
+      ],
       "icon": "resources/icon.ico",
       "target": [
         {
@@ -76,6 +84,12 @@
       ]
     },
     "linux": {
+      "extraResources": [
+        {
+          "from": "../dist/noctune-backend",
+          "to": "backend/noctune-backend"
+        }
+      ],
       "icon": "resources/icon.png",
       "target": ["AppImage", "deb"],
       "category": "Utility"
