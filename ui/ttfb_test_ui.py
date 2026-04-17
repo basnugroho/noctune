@@ -282,7 +282,27 @@ def apply_runtime_overrides(network_info: dict, config: dict) -> dict:
             method='Manual (Config)',
         )
 
+    info['connectivity_type'] = infer_browser_connectivity_type(info)
+
     return info
+
+
+def infer_browser_connectivity_type(network_info: dict) -> str | None:
+    """Infer browser connectivity conservatively using desktop-detected WiFi identity."""
+    info = network_info or {}
+    wifi_ssid = info.get('wifi_ssid')
+    wifi_ssid_method = info.get('wifi_ssid_method')
+    wifi_rssi = info.get('wifi_rssi')
+    wifi_channel = info.get('wifi_channel')
+
+    has_live_wifi_ssid = bool(wifi_ssid) and wifi_ssid_method not in (None, 'preferred')
+    has_live_wifi_radio = wifi_rssi is not None or wifi_channel is not None
+
+    if has_live_wifi_ssid or has_live_wifi_radio:
+        return 'WiFi'
+
+    # Fixed should stay null until desktop flow has explicit wired detection.
+    return None
 
 
 # Mapping from plain DNS server IPs to their DoH JSON API endpoints for fallback
@@ -1123,6 +1143,7 @@ def detect_network_info() -> dict:
         'wifi_rssi': None,
         'wifi_band': None,
         'wifi_channel': None,
+        'connectivity_type': None,
         'dns_primary': None,
         'dns_servers': [],
         'location': None,
@@ -1239,6 +1260,7 @@ def detect_network_info() -> dict:
                 ssid = interface.ssid()
                 if ssid:
                     info['wifi_ssid'] = ssid
+                    info['wifi_ssid_method'] = 'corewlan'
                 channel = interface.wlanChannel()
                 if channel:
                     info['wifi_channel'] = channel.channelNumber()
@@ -1259,6 +1281,7 @@ def detect_network_info() -> dict:
                     ssid_match = re.search(r'^\s*SSID:\s*(.+)$', output, re.MULTILINE)
                     if ssid_match and not info['wifi_ssid']:
                         info['wifi_ssid'] = ssid_match.group(1).strip()
+                        info['wifi_ssid_method'] = 'airport'
                     # Parse RSSI (agrCtlRSSI)
                     rssi_match = re.search(r'^\s*agrCtlRSSI:\s*(-?\d+)$', output, re.MULTILINE)
                     if rssi_match and info['wifi_rssi'] is None:
@@ -1281,6 +1304,7 @@ def detect_network_info() -> dict:
                     match = re.search(r'Current Wi-Fi Network: (.+)', proc.stdout)
                     if match:
                         info['wifi_ssid'] = match.group(1).strip()
+                        info['wifi_ssid_method'] = 'networksetup'
                         break
             except:
                 pass
@@ -1301,6 +1325,7 @@ def detect_network_info() -> dict:
                                 ssid_name = current_network.get('_name')
                                 if not info['wifi_ssid'] and ssid_name and ssid_name != '<redacted>':
                                     info['wifi_ssid'] = ssid_name
+                                    info['wifi_ssid_method'] = 'system_profiler'
                                 channel_str = current_network.get('spairport_current_network_information_channel', '')
                                 if channel_str:
                                     ch_match = re.search(r'(\d+)', str(channel_str))
