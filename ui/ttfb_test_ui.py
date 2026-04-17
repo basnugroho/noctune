@@ -294,6 +294,7 @@ def infer_browser_connectivity_type(network_info: dict) -> str | None:
     wifi_ssid_method = info.get('wifi_ssid_method')
     wifi_rssi = info.get('wifi_rssi')
     wifi_channel = info.get('wifi_channel')
+    wired_interface_name = info.get('wired_interface_name')
 
     has_live_wifi_ssid = bool(wifi_ssid) and wifi_ssid_method not in (None, 'preferred')
     has_live_wifi_radio = wifi_rssi is not None or wifi_channel is not None
@@ -301,7 +302,123 @@ def infer_browser_connectivity_type(network_info: dict) -> str | None:
     if has_live_wifi_ssid or has_live_wifi_radio:
         return 'WiFi'
 
-    # Fixed should stay null until desktop flow has explicit wired detection.
+    if wired_interface_name:
+        return 'Fixed'
+
+    return None
+
+
+def detect_wired_interface(system: str) -> dict | None:
+    """Detect an explicitly wired default-route interface on desktop platforms."""
+    if system == 'Darwin':
+        return detect_macos_wired_interface()
+    if system == 'Windows':
+        return detect_windows_wired_interface()
+    return None
+
+
+def detect_macos_wired_interface() -> dict | None:
+    """Return wired interface details when macOS default route is an Ethernet/LAN port."""
+    try:
+        route_proc = subprocess.run(
+            ['route', '-n', 'get', 'default'],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        iface_match = re.search(r'interface:\s*(\S+)', route_proc.stdout)
+        if not iface_match:
+            return None
+
+        default_interface = iface_match.group(1)
+        ports_proc = subprocess.run(
+            ['networksetup', '-listallhardwareports'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        hardware_port = parse_macos_hardware_port_map(ports_proc.stdout).get(default_interface)
+        if not hardware_port:
+            return None
+
+        normalized_port = hardware_port.lower()
+        if any(marker in normalized_port for marker in ['wi-fi', 'airport', 'wireless']):
+            return None
+        if any(marker in normalized_port for marker in ['ethernet', 'lan']):
+            return {
+                'wired_interface_name': default_interface,
+                'wired_interface_label': hardware_port,
+                'wired_interface_method': 'route+networksetup',
+            }
+    except Exception:
+        return None
+
+    return None
+
+
+def parse_macos_hardware_port_map(output: str) -> dict[str, str]:
+    """Map macOS device names to their hardware port labels."""
+    port_map: dict[str, str] = {}
+    current_port = None
+
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if line.startswith('Hardware Port:'):
+            current_port = line.split(':', 1)[1].strip()
+        elif line.startswith('Device:') and current_port:
+            device_name = line.split(':', 1)[1].strip()
+            if device_name:
+                port_map[device_name] = current_port
+            current_port = None
+
+    return port_map
+
+
+def detect_windows_wired_interface() -> dict | None:
+    """Return wired interface details when Windows default route uses an Ethernet/LAN adapter."""
+    try:
+        powershell_command = (
+            "$route = Get-NetRoute -DestinationPrefix '0.0.0.0/0' -AddressFamily IPv4 "
+            "-ErrorAction SilentlyContinue | Sort-Object RouteMetric, InterfaceMetric | Select-Object -First 1; "
+            "if ($null -eq $route) { return }; "
+            "$adapter = Get-NetAdapter -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue; "
+            "if ($null -eq $adapter) { return }; "
+            "[pscustomobject]@{"
+            "Name=$adapter.Name;"
+            "InterfaceDescription=$adapter.InterfaceDescription;"
+            "Status=$adapter.Status;"
+            "MediaType=$adapter.MediaType;"
+            "PhysicalMediaType=$adapter.PhysicalMediaType"
+            "} | ConvertTo-Json -Compress"
+        )
+        proc = subprocess.run(
+            ['powershell', '-NoProfile', '-Command', powershell_command],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if proc.returncode != 0 or not proc.stdout.strip():
+            return None
+
+        adapter = json.loads(proc.stdout)
+        if str(adapter.get('Status')).lower() != 'up':
+            return None
+
+        adapter_text = ' '.join(
+            str(adapter.get(key) or '')
+            for key in ['Name', 'InterfaceDescription', 'MediaType', 'PhysicalMediaType']
+        ).lower()
+        if any(marker in adapter_text for marker in ['wireless', 'wi-fi', 'wifi', 'wlan', 'bluetooth', 'vpn', 'virtual']):
+            return None
+        if any(marker in adapter_text for marker in ['ethernet', '802.3', 'lan']):
+            return {
+                'wired_interface_name': adapter.get('Name'),
+                'wired_interface_label': adapter.get('InterfaceDescription') or adapter.get('Name'),
+                'wired_interface_method': 'powershell-default-route',
+            }
+    except Exception:
+        return None
+
     return None
 
 
@@ -1144,6 +1261,9 @@ def detect_network_info() -> dict:
         'wifi_band': None,
         'wifi_channel': None,
         'connectivity_type': None,
+        'wired_interface_name': None,
+        'wired_interface_label': None,
+        'wired_interface_method': None,
         'dns_primary': None,
         'dns_servers': [],
         'location': None,
@@ -1409,6 +1529,10 @@ def detect_network_info() -> dict:
                 info['dns_primary'] = info['dns_servers'][0]
         except:
             pass
+
+    wired_info = detect_wired_interface(system)
+    if wired_info:
+        info.update(wired_info)
     
     # Get location via IP
     try:
