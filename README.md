@@ -156,6 +156,49 @@ Output akan ada di `electron/dist/`.
 
 ---
 
+## 📱 Mobile App (Android)
+
+Versi Flutter untuk mobile tersedia di folder `mobile` dan saat ini distribusi utamanya adalah APK Android.
+
+- Panduan mobile lengkap: [mobile/README.md](mobile/README.md)
+- APK release siap bagikan: `releases/v1.0.0/mobile/noctune-mobile-v1.0.0-android.apk`
+
+Prasyarat minimum untuk build dari clone bersih:
+
+- Flutter SDK tersedia di `PATH`
+- Android SDK terpasang
+- JDK yang kompatibel dengan Flutter/Gradle
+
+### Cara Distribusi ke User Android
+
+1. Ambil file APK release dari folder `releases/v1.0.0/mobile`.
+2. Kirim ke user melalui chat, email, drive, atau MDM internal.
+3. Minta user install manual dari file APK tersebut.
+
+### Build Ulang APK
+
+Dari root repository:
+
+```bash
+git clone https://github.com/basnugroho/noctune.git
+cd noctune
+cd mobile
+flutter pub get
+flutter build apk --release
+```
+
+Atau jika sudah berada di root project yang sudah di-clone:
+
+```bash
+cd mobile
+flutter pub get
+flutter build apk --release
+```
+
+Output default Flutter akan ada di `mobile/build/app/outputs/flutter-apk/app-release.apk`.
+
+---
+
 ## 🔄 Flow Sederhana
 
 ```mermaid
