@@ -117,6 +117,7 @@
                 SAMPLE_COUNT: parseInt(document.getElementById('sample-count').value) || 5,
                 DELAY_SECONDS: parseInt(document.getElementById('delay-seconds').value) || 2,
                 PING_DURATION: parseInt(document.getElementById('ping-duration').value) || 10,
+                IS_MOBILE: false,
                 AUTO_CONTRIBUTE: document.getElementById('auto-contribute').checked,
                 USE_CUSTOM_DNS: document.getElementById('use-custom-dns').checked,
                 CUSTOM_DNS_SERVERS: customDnsServers,

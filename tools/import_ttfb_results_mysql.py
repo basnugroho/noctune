@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import os
+import re
 import subprocess
 import tempfile
 from datetime import datetime, timezone
@@ -24,7 +25,7 @@ DATETIME_COLUMNS = {
 
 TIME_COLUMNS = {"time_short"}
 
-BOOLEAN_COLUMNS = {"battery_charging", "location_is_precise"}
+BOOLEAN_COLUMNS = {"battery_charging", "location_is_precise", "is_mobile"}
 
 INTEGER_COLUMNS = {
     "sample_num",
@@ -62,6 +63,14 @@ DECIMAL_COLUMNS = {
     "summary_min_ttfb",
     "summary_max_ttfb",
     "summary_std_ttfb",
+}
+
+SCHEMA_CONSTRAINT_PREFIXES = {
+    "PRIMARY",
+    "UNIQUE",
+    "KEY",
+    "CONSTRAINT",
+    "INDEX",
 }
 
 
@@ -162,9 +171,85 @@ def run_mysql_sql(mysql_env: dict[str, str], sql_text: str, database: str) -> No
     ]
 
     try:
-        subprocess.run(command, env=env, stdin=open(tmp_path, "r", encoding="utf-8"), check=True)
+        with open(tmp_path, "r", encoding="utf-8") as sql_file:
+            subprocess.run(command, env=env, stdin=sql_file, check=True)
     finally:
         Path(tmp_path).unlink(missing_ok=True)
+
+
+def run_mysql_query(mysql_env: dict[str, str], sql_text: str, database: str) -> str:
+    env = os.environ.copy()
+    env["MYSQL_PWD"] = mysql_env["DB_PASSWORD"]
+
+    command = [
+        "mysql",
+        f"--host={mysql_env['DB_HOST']}",
+        f"--port={mysql_env['DB_PORT']}",
+        f"--user={mysql_env['DB_USERNAME']}",
+        "--default-character-set=utf8mb4",
+        "--batch",
+        "--skip-column-names",
+        database,
+        "-e",
+        sql_text,
+    ]
+    completed = subprocess.run(command, env=env, capture_output=True, text=True, check=True)
+    return completed.stdout
+
+
+def extract_schema_columns(schema_sql: str) -> list[tuple[str, str]]:
+    columns: list[tuple[str, str]] = []
+    in_table_definition = False
+
+    for raw_line in schema_sql.splitlines():
+        stripped = raw_line.strip()
+        if not stripped:
+            continue
+        if stripped.upper().startswith("CREATE TABLE"):
+            in_table_definition = True
+            continue
+        if not in_table_definition:
+            continue
+        if stripped.startswith(")"):
+            break
+
+        definition = stripped.rstrip(",")
+        if not definition:
+            continue
+
+        first_token = definition.split(None, 1)[0].strip("`").upper()
+        if first_token in SCHEMA_CONSTRAINT_PREFIXES:
+            continue
+
+        match = re.match(r"`?([A-Za-z_][A-Za-z0-9_]*)`?\s+", definition)
+        if not match:
+            continue
+
+        columns.append((match.group(1), definition))
+
+    return columns
+
+
+def fetch_existing_columns(mysql_env: dict[str, str], table: str, database: str) -> set[str]:
+    output = run_mysql_query(mysql_env, f"SHOW COLUMNS FROM `{table}`;", database)
+    columns = {line.split("\t", 1)[0].strip() for line in output.splitlines() if line.strip()}
+    return columns
+
+
+def ensure_table_columns(mysql_env: dict[str, str], schema_sql: str, table: str, database: str) -> list[str]:
+    schema_columns = extract_schema_columns(schema_sql)
+    existing_columns = fetch_existing_columns(mysql_env, table, database)
+    missing_definitions = [definition for column, definition in schema_columns if column not in existing_columns]
+
+    if not missing_definitions:
+        return []
+
+    alter_sql = "ALTER TABLE `{table}`\n{clauses};\n".format(
+        table=table,
+        clauses=",\n".join(f"ADD COLUMN {definition}" for definition in missing_definitions),
+    )
+    run_mysql_sql(mysql_env, alter_sql, database)
+    return [column for column, definition in schema_columns if definition in missing_definitions]
 
 
 def main() -> None:
@@ -176,6 +261,9 @@ def main() -> None:
     if args.table != "ttfb_results":
         schema_sql = schema_sql.replace("ttfb_results", args.table)
     run_mysql_sql(env_values, schema_sql, database)
+    added_columns = ensure_table_columns(env_values, schema_sql, args.table, database)
+    if added_columns:
+        print(f"Added missing columns to {database}.{args.table}: {', '.join(added_columns)}")
 
     with args.csv_path.open("r", encoding="utf-8", newline="") as csv_file:
         reader = csv.DictReader(csv_file)

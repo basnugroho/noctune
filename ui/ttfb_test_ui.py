@@ -727,6 +727,7 @@ def parse_config(config_path: Path) -> dict:
         'TTFB_GOOD_MS': 200,
         'TTFB_WARNING_MS': 500,
         'ONT_DNS': '',
+        'IS_MOBILE': False,
         'BRAND': '',
         'NO_INTERNET': '',
         'MANUAL_LATITUDE': '',
@@ -754,7 +755,7 @@ def parse_config(config_path: Path) -> dict:
                 elif key in ['SAMPLE_COUNT', 'DELAY_SECONDS', 'PING_DURATION', 
                            'SIGNAL_THRESHOLD_DBM', 'TTFB_GOOD_MS', 'TTFB_WARNING_MS']:
                     config[key] = int(value)
-                elif key in ['AUTO_CONTRIBUTE', 'USE_CUSTOM_DNS']:
+                elif key in ['AUTO_CONTRIBUTE', 'USE_CUSTOM_DNS', 'IS_MOBILE']:
                     config[key] = value.lower() in ['true', '1', 'yes', 'on']
                 elif key in ['ONT_DNS', 'BRAND', 'NO_INTERNET', 'CUSTOM_DNS_SERVERS', 'MANUAL_LATITUDE', 'MANUAL_LONGITUDE']:
                     config[key] = value
@@ -801,6 +802,7 @@ def save_config(config: dict, config_path: Path) -> bool:
             f.write(f"ONT_DNS = {config.get('ONT_DNS', '')}\n\n")
 
             f.write("# Optional: Contribution metadata\n")
+            f.write(f"IS_MOBILE = {'True' if config.get('IS_MOBILE', False) else 'False'}\n")
             f.write(f"BRAND = {config.get('BRAND', '')}\n")
             f.write(f"NO_INTERNET = {config.get('NO_INTERNET', '')}\n")
         
@@ -2152,6 +2154,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
         if self.path == '/api/config':
             try:
                 config = json.loads(post_data)
+                config['IS_MOBILE'] = False
                 config['TARGETS'] = normalize_target_urls(config.get('TARGETS', []))
                 parse_manual_coordinates(config.get('MANUAL_LATITUDE'), config.get('MANUAL_LONGITUDE'))
                 if config.get('USE_CUSTOM_DNS') and not parse_dns_servers(config.get('CUSTOM_DNS_SERVERS')):
@@ -2204,6 +2207,7 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             else:
                 try:
                     config = json.loads(post_data)
+                    config['IS_MOBILE'] = False
                     config['TARGETS'] = normalize_target_urls(config.get('TARGETS', []))
                     parse_manual_coordinates(config.get('MANUAL_LATITUDE'), config.get('MANUAL_LONGITUDE'))
                     if config.get('USE_CUSTOM_DNS') and not parse_dns_servers(config.get('CUSTOM_DNS_SERVERS')):
