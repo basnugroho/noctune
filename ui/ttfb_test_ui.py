@@ -291,12 +291,27 @@ DOH_ENDPOINTS = {
     '8.8.4.4': 'https://dns.google/resolve',
     '1.1.1.1': 'https://cloudflare-dns.com/dns-query',
     '1.0.0.1': 'https://cloudflare-dns.com/dns-query',
+    '9.9.9.9': 'https://dns.quad9.net:5053/dns-query',
+    '149.112.112.112': 'https://dns.quad9.net:5053/dns-query',
 }
+
+# Multiple DoH fallback URLs for resilience when ISP blocks specific providers
+DOH_FALLBACK_URLS = [
+    'https://dns.google/resolve',          # Google
+    'https://cloudflare-dns.com/dns-query', # Cloudflare
+    'https://dns.quad9.net:5053/dns-query', # Quad9
+    'https://doh.opendns.com/dns-query',    # OpenDNS
+]
 
 DOH_FALLBACK_URL = 'https://dns.google/resolve'
 
 
-def resolve_hostname_doh(hostname: str, doh_url: str = DOH_FALLBACK_URL, timeout: int = 10) -> str | None:
+def resolve_hostname_doh(
+    hostname: str,
+    doh_url: str = DOH_FALLBACK_URL,
+    timeout: int = 15,
+    add_log_fn=None
+) -> str | None:
     """Resolve a hostname via DNS-over-HTTPS (DoH) using the JSON API.
 
     Returns the resolved IP address string or None on failure.
@@ -305,10 +320,16 @@ def resolve_hostname_doh(hostname: str, doh_url: str = DOH_FALLBACK_URL, timeout
     """
     import ssl
 
+    def log(msg, level='info'):
+        if add_log_fn:
+            add_log_fn(msg, level)
+        else:
+            print(f'  [DoH {level}] {msg}')
+
     params = urlencode({'name': hostname, 'type': 'A'})
     url = f'{doh_url}?{params}'
     req = urllib.request.Request(url, headers={
-        'Accept': 'application/json',
+        'Accept': 'application/dns-json',
         'User-Agent': 'NOCTune/1.0',
     })
 
@@ -316,25 +337,52 @@ def resolve_hostname_doh(hostname: str, doh_url: str = DOH_FALLBACK_URL, timeout
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             data = json.loads(resp.read().decode())
-            # Status 0 = NOERROR
-            if data.get('Status') != 0:
+            status = data.get('Status')
+            # Status 0 = NOERROR, 3 = NXDOMAIN
+            if status != 0:
+                status_names = {0: 'NOERROR', 1: 'FORMERR', 2: 'SERVFAIL', 3: 'NXDOMAIN', 5: 'REFUSED'}
+                status_name = status_names.get(status, f'CODE_{status}')
+                log(f'DoH query returned {status_name} for {hostname} via {doh_url}', 'warning')
                 return None
             for answer in data.get('Answer', []):
                 # Type 1 = A record
                 if answer.get('type') == 1:
-                    return answer.get('data')
-    except Exception:
-        return None
+                    resolved_ip = answer.get('data')
+                    log(f'DoH resolved {hostname} → {resolved_ip} via {doh_url}', 'success')
+                    return resolved_ip
+            log(f'DoH query returned no A records for {hostname} via {doh_url}', 'warning')
+    except urllib.error.HTTPError as e:
+        log(f'DoH HTTP error {e.code} for {hostname} via {doh_url}: {e.reason}', 'error')
+    except urllib.error.URLError as e:
+        log(f'DoH connection failed for {hostname} via {doh_url}: {e.reason}', 'error')
+    except json.JSONDecodeError as e:
+        log(f'DoH invalid JSON response for {hostname} via {doh_url}: {e}', 'error')
+    except ssl.SSLError as e:
+        log(f'DoH SSL error for {hostname} via {doh_url}: {e}', 'error')
+    except TimeoutError:
+        log(f'DoH timeout ({timeout}s) for {hostname} via {doh_url}', 'error')
+    except Exception as e:
+        log(f'DoH unexpected error for {hostname} via {doh_url}: {type(e).__name__}: {e}', 'error')
     return None
 
 
-def resolve_hostname_with_dns_servers(url: str, dns_servers: list[str]) -> tuple[str, int, str, str] | None:
+def resolve_hostname_with_dns_servers(
+    url: str,
+    dns_servers: list[str],
+    add_log_fn=None
+) -> tuple[str, int, str, str] | None:
     """Resolve a URL hostname via the provided DNS servers for curl --resolve.
 
     If plain DNS (port 53) fails with NXDOMAIN (common when ISPs perform
     transparent DNS hijacking), automatically retries via DNS-over-HTTPS
-    to bypass the interception.
+    to bypass the interception using multiple DoH providers.
     """
+    def log(msg, level='info'):
+        if add_log_fn:
+            add_log_fn(msg, level)
+        else:
+            print(f'  [{level}] {msg}')
+
     effective_dns_servers = parse_dns_servers(dns_servers)
     if not effective_dns_servers:
         return None
@@ -351,7 +399,8 @@ def resolve_hostname_with_dns_servers(url: str, dns_servers: list[str]) -> tuple
     if port is None:
         port = 443 if parsed.scheme == 'https' else 80
 
-    last_error = None
+    # --- Phase 1: Try plain DNS (port 53) ---
+    last_dns_error = None
     for server in effective_dns_servers:
         resolver = dns_resolver_module.Resolver(configure=False)
         resolver.nameservers = [server]
@@ -359,24 +408,54 @@ def resolve_hostname_with_dns_servers(url: str, dns_servers: list[str]) -> tuple
         try:
             answer = resolver.resolve(hostname, 'A')
             resolved_ip = answer[0].to_text()
+            log(f'Plain DNS resolved {hostname} → {resolved_ip} via {server}', 'success')
             return hostname, port, resolved_ip, str(answer.nameserver)
+        except dns_resolver_module.NXDOMAIN:
+            log(f'Plain DNS returned NXDOMAIN for {hostname} via {server} (ISP may be blocking)', 'warning')
+            last_dns_error = 'NXDOMAIN'
+        except dns_resolver_module.NoAnswer:
+            log(f'Plain DNS returned no answer for {hostname} via {server}', 'warning')
+            last_dns_error = 'NoAnswer'
+        except dns_resolver_module.Timeout:
+            log(f'Plain DNS timed out for {hostname} via {server}', 'warning')
+            last_dns_error = 'Timeout'
         except Exception as exc:
-            last_error = exc
+            log(f'Plain DNS error for {hostname} via {server}: {type(exc).__name__}', 'warning')
+            last_dns_error = str(exc)
 
-    # Plain DNS failed for all servers – attempt DoH fallback
-    print(f'  ⚠️  Plain DNS failed ({type(last_error).__name__}), trying DNS-over-HTTPS fallback...')
+    # --- Phase 2: DoH fallback (bypasses ISP DNS interception) ---
+    log(f'⚠️ Plain DNS failed ({last_dns_error}), trying DNS-over-HTTPS fallback...', 'warning')
 
+    # First try DoH endpoints matching our configured DNS servers
+    tried_doh_urls = set()
     for server in effective_dns_servers:
-        doh_url = DOH_ENDPOINTS.get(server, DOH_FALLBACK_URL)
-        resolved_ip = resolve_hostname_doh(hostname, doh_url=doh_url)
+        doh_url = DOH_ENDPOINTS.get(server)
+        if doh_url and doh_url not in tried_doh_urls:
+            tried_doh_urls.add(doh_url)
+            resolved_ip = resolve_hostname_doh(hostname, doh_url=doh_url, add_log_fn=add_log_fn)
+            if resolved_ip:
+                log(f'✅ DoH resolved {hostname} → {resolved_ip} via {doh_url}', 'success')
+                return hostname, port, resolved_ip, f'{server} (DoH)'
+
+    # Then try all remaining fallback DoH providers
+    for doh_url in DOH_FALLBACK_URLS:
+        if doh_url in tried_doh_urls:
+            continue
+        tried_doh_urls.add(doh_url)
+        log(f'Trying additional DoH provider: {doh_url}', 'info')
+        resolved_ip = resolve_hostname_doh(hostname, doh_url=doh_url, add_log_fn=add_log_fn)
         if resolved_ip:
-            print(f'  ✅ DoH resolved {hostname} → {resolved_ip} via {doh_url}')
-            return hostname, port, resolved_ip, f'{server} (DoH)'
+            log(f'✅ DoH resolved {hostname} → {resolved_ip} via {doh_url}', 'success')
+            return hostname, port, resolved_ip, f'DoH ({doh_url})'
     
     # Both plain DNS and DoH failed
+    doh_providers_tried = ', '.join(sorted(tried_doh_urls))
     raise RuntimeError(
-        f'DNS resolution failed for {hostname} via plain DNS and DNS-over-HTTPS. '
-        f'Last error: {last_error}'
+        f'DNS resolution failed for {hostname}. '
+        f'Plain DNS: {last_dns_error}. '
+        f'DoH providers tried: {doh_providers_tried}. '
+        f'Your ISP may be blocking both DNS (port 53) and DoH providers. '
+        f'Try using a VPN or different network.'
     )
 
 
@@ -905,6 +984,7 @@ def measure_ttfb(
     ttfb_good_ms: int | None = None,
     ttfb_warning_ms: int | None = None,
     dns_servers: list[str] | None = None,
+    add_log_fn=None,
 ) -> dict:
     """Measure TTFB for a single URL, including dig trace output."""
     normalized_url = normalize_target_url(url)
@@ -933,7 +1013,11 @@ def measure_ttfb(
     dig_query_time_ms = None
 
     try:
-        resolved_host = resolve_hostname_with_dns_servers(normalized_url, dns_servers or [])
+        resolved_host = resolve_hostname_with_dns_servers(
+            normalized_url,
+            dns_servers or [],
+            add_log_fn=add_log_fn
+        )
         if resolved_host is not None:
             hostname, port, resolved_ip, resolved_dns_server = resolved_host
             cmd[6:6] = ['--resolve', f'{hostname}:{port}:{resolved_ip}']
@@ -1365,6 +1449,85 @@ def detect_network_info() -> dict:
     return info
 
 
+def get_local_ip() -> str | None:
+    import socket
+
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.connect(("8.8.8.8", 80))
+        local_ip = sock.getsockname()[0]
+        sock.close()
+        return local_ip
+    except Exception:
+        return None
+
+
+def build_network_snapshot(include_debug: bool = False) -> dict:
+    network_info = apply_runtime_overrides(detect_network_info(), parse_config(CONFIG_FILE))
+    network_info['local_ip'] = get_local_ip()
+    if include_debug:
+        network_info['wifi_debug'] = get_windows_netsh_debug()
+    return network_info
+
+
+def get_windows_netsh_debug() -> dict:
+    debug = {
+        'platform': platform.system(),
+        'command': 'netsh wlan show interfaces',
+        'returncode': None,
+        'stdout': '',
+        'stderr': '',
+        'parsed_ssid': None,
+        'parsed_method': None,
+        'parsed_rssi': None,
+        'parsed_channel': None,
+        'parsed_band': None,
+    }
+
+    if platform.system() != 'Windows':
+        debug['stderr'] = 'netsh debug is only available on Windows.'
+        return debug
+
+    try:
+        proc = subprocess.run(
+            ['netsh', 'wlan', 'show', 'interfaces'],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        output = proc.stdout or ''
+        debug['returncode'] = proc.returncode
+        debug['stdout'] = output
+        debug['stderr'] = proc.stderr or ''
+
+        ssid_value = extract_windows_netsh_field(output, ['ssid'])
+        if ssid_value and not ssid_value.lower().startswith('bssid'):
+            debug['parsed_ssid'] = ssid_value
+            debug['parsed_method'] = 'netsh'
+
+        signal_match = re.search(r'(?:signal|sinyal)\s*:\s*(\d+)%', output, flags=re.IGNORECASE)
+        if signal_match:
+            signal_pct = int(signal_match.group(1))
+            debug['parsed_rssi'] = int(round(-100 + (signal_pct * 0.7)))
+
+        channel_match = re.search(r'(?:channel|kanal)\s*:\s*(\d+)', output, flags=re.IGNORECASE)
+        if channel_match:
+            debug['parsed_channel'] = int(channel_match.group(1))
+            debug['parsed_band'] = '5GHz' if debug['parsed_channel'] >= 36 else '2.4GHz'
+
+        if not debug['parsed_ssid']:
+            profile_match = re.search(r'Profile\s*:\s*(.+)', output, flags=re.IGNORECASE)
+            if profile_match:
+                profile_value = clean_windows_netsh_value(profile_match.group(1))
+                if profile_value:
+                    debug['parsed_ssid'] = profile_value
+                    debug['parsed_method'] = 'netsh-profile'
+    except Exception as exc:
+        debug['stderr'] = str(exc)
+
+    return debug
+
+
 def run_tests(config: dict):
     """Run TTFB tests."""
     global test_running, test_results, current_session_dir, test_stopped, test_paused
@@ -1539,6 +1702,7 @@ def run_tests(config: dict):
                         ttfb_good_ms=config.get('TTFB_GOOD_MS'),
                         ttfb_warning_ms=config.get('TTFB_WARNING_MS'),
                         dns_servers=dns_scenario,
+                        add_log_fn=add_log,
                     )
                     result['sample_num'] = sample_num
                     result['target_name'] = target_name
@@ -1736,17 +1900,15 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
             self.send_json(prereqs)
             
         elif self.path == '/api/network':
-            import socket
-            network_info = apply_runtime_overrides(detect_network_info(), parse_config(CONFIG_FILE))
-            # Add local IP for network access
-            try:
-                s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                s.connect(("8.8.8.8", 80))
-                network_info['local_ip'] = s.getsockname()[0]
-                s.close()
-            except:
-                network_info['local_ip'] = None
-            self.send_json(network_info)
+            self.send_json(build_network_snapshot())
+
+        elif self.path == '/api/debug/netsh':
+            debug_info = get_windows_netsh_debug()
+            add_log(
+                f"Wi-Fi debug requested. Parsed SSID: {debug_info.get('parsed_ssid') or 'Not detected'}",
+                'info' if debug_info.get('parsed_ssid') else 'warning'
+            )
+            self.send_json(debug_info)
             
         elif self.path == '/api/logs':
             logs = []
@@ -2024,6 +2186,17 @@ class TTFBHandler(http.server.SimpleHTTPRequestHandler):
                 self.send_json({'success': True, 'location': location_data})
             except Exception as e:
                 self.send_json({'success': False, 'error': str(e)})
+
+        elif self.path == '/api/network/refresh':
+            try:
+                network_info = build_network_snapshot()
+                add_log(
+                    f"Network info refreshed. SSID: {network_info.get('wifi_ssid') or 'Not detected'} | Location method: {(network_info.get('location') or {}).get('method') or 'Unknown'}",
+                    'info' if network_info.get('wifi_ssid') else 'warning'
+                )
+                self.send_json(network_info)
+            except Exception as e:
+                self.send_json({'error': str(e)})
                 
         elif self.path == '/api/test/start':
             if test_running:

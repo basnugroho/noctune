@@ -189,6 +189,26 @@
             align-items: center;
             gap: 8px;
         }
+        .network-header-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+        .network-header-row .panel-title {
+            margin-bottom: 0;
+        }
+        .network-actions {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+        .btn-inline {
+            width: auto;
+            padding: 8px 12px;
+            font-size: 0.85em;
+        }
         .config-section {
             margin-bottom: 24px;
         }
@@ -415,6 +435,35 @@
             padding: 16px;
             margin-bottom: 20px;
         }
+        .network-debug-panel {
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 16px;
+            margin-bottom: 20px;
+            border: 1px solid rgba(255,255,255,0.06);
+        }
+        .network-debug-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+        .network-debug-output {
+            width: 100%;
+            max-height: 280px;
+            overflow: auto;
+            padding: 12px;
+            border-radius: 8px;
+            background: rgba(0, 0, 0, 0.25);
+            color: #cfe7ff;
+            font-size: 0.82em;
+            line-height: 1.5;
+            white-space: pre-wrap;
+            word-break: break-word;
+            font-family: 'SF Mono', Consolas, Monaco, monospace;
+            border: 1px solid rgba(58, 123, 213, 0.18);
+        }
         .network-section {
             margin-bottom: 16px;
             padding-bottom: 12px;
@@ -596,6 +645,18 @@
             display: grid;
             grid-template-columns: repeat(2, 1fr);
             gap: 8px;
+        }
+        @media (max-width: 960px) {
+            .network-header-row {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .network-actions {
+                width: 100%;
+            }
+            .network-actions .btn-inline {
+                flex: 1;
+            }
         }
         
         /* Results Summary */

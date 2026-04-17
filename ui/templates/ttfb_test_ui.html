@@ -319,11 +319,24 @@
             </div>
 
             <div id="network-info" style="display: none;">
-                <div class="panel-title">📡 Network Info</div>
+                <div class="network-header-row">
+                    <div class="panel-title">📡 Network Info</div>
+                    <div class="network-actions">
+                        <button class="btn btn-secondary btn-inline" id="refresh-network-btn" onclick="refreshNetworkInfo()">🔄 Refresh Network</button>
+                        <button class="btn btn-secondary btn-inline" id="debug-wifi-btn" onclick="debugWifiInfo()">🧪 Debug Wi-Fi</button>
+                    </div>
+                </div>
                 <div class="network-card">
                     <div class="network-grid" id="network-grid">
                         <!-- Filled by JS -->
                     </div>
+                </div>
+                <div class="network-debug-panel" id="network-debug-panel" style="display: none;">
+                    <div class="network-debug-header">
+                        <div class="panel-title" style="margin-bottom: 0;">🧾 Wi-Fi Debug Output</div>
+                        <button class="btn btn-secondary btn-inline" onclick="toggleWifiDebugPanel()" id="wifi-debug-toggle-btn">Hide</button>
+                    </div>
+                    <pre class="network-debug-output" id="wifi-debug-output"></pre>
                 </div>
                 <!-- Persistent map container (not rebuilt on updates) -->
                 <div id="persistent-map" style="display: none;">

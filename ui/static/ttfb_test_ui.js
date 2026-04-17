@@ -6,6 +6,7 @@
         let lastMapCoords = null;  // Track map coordinates to prevent flickering
         let browserLocation = null;  // Browser geolocation override
         let cachedNetworkInfo = null;  // Last network info from server
+        let wifiDebugVisible = false;
         
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
@@ -153,10 +154,16 @@
         }
         
         // Request browser geolocation for precise coordinates
-        function requestBrowserLocation() {
-            if (!navigator.geolocation) return;
+        function requestBrowserLocation(interactive = false) {
+            if (!navigator.geolocation) {
+                if (interactive) {
+                    addLog('Browser geolocation is not available in this environment.', 'warning');
+                }
+                return Promise.resolve(null);
+            }
             
-            navigator.geolocation.getCurrentPosition(
+            return new Promise((resolve) => {
+                navigator.geolocation.getCurrentPosition(
                 async (position) => {
                     const lat = position.coords.latitude;
                     const lon = position.coords.longitude;
@@ -207,18 +214,33 @@
                         await loadNetworkInfo();
                     } catch (e) {
                         console.error('Failed to persist browser location:', e);
+                        if (interactive) {
+                            addLog('Failed to persist refreshed browser location: ' + e.message, 'error');
+                        }
                     }
                     
                     // Re-render with precise location
                     if (cachedNetworkInfo) {
                         updateNetworkInfo(cachedNetworkInfo);
                     }
+                    if (interactive) {
+                        addLog(`Browser location refreshed (${accuracy ? Math.round(accuracy) + 'm accuracy' : 'accuracy unknown'})`, 'success');
+                    }
+                    resolve(browserLocation);
                 },
                 (err) => {
                     console.log('Browser geolocation not available:', err.message);
+                    if (interactive) {
+                        const permissionHint = err.code === 1
+                            ? 'Location access is blocked. Allow location for this app window/site, then click Refresh Network again.'
+                            : 'Browser location refresh failed: ' + err.message;
+                        addLog(permissionHint, 'warning');
+                    }
+                    resolve(null);
                 },
-                { enableHighAccuracy: true, timeout: 10000, maximumAge: 300000 }
+                { enableHighAccuracy: true, timeout: 10000, maximumAge: interactive ? 0 : 300000 }
             );
+            });
         }
         
         // Load network info and show URL
@@ -252,6 +274,105 @@
                 
             } catch (e) {
                 console.error('Error loading network info:', e);
+            }
+        }
+
+        async function refreshNetworkInfo() {
+            const refreshBtn = document.getElementById('refresh-network-btn');
+            const originalText = refreshBtn ? refreshBtn.textContent : '';
+            if (refreshBtn) {
+                refreshBtn.disabled = true;
+                refreshBtn.textContent = 'Refreshing...';
+            }
+
+            addLog('Refreshing network information...', 'info');
+
+            try {
+                await requestBrowserLocation(true);
+                const response = await fetch('/api/network/refresh', { method: 'POST' });
+                const result = await response.json();
+
+                if (!response.ok || result.error) {
+                    throw new Error(result.error || 'Failed to refresh network information');
+                }
+
+                updateNetworkInfo(result);
+                const ssidText = result.wifi_ssid ? `SSID: ${result.wifi_ssid}` : 'SSID still not detected';
+                const locationText = result.location && (result.location.city || result.location.method)
+                    ? `Location: ${result.location.city || 'Unknown city'} [${result.location.method || 'Unknown method'}]`
+                    : 'Location still unavailable';
+                addLog(`Network refresh complete. ${ssidText}. ${locationText}.`, 'success');
+            } catch (e) {
+                console.error('Error refreshing network info:', e);
+                addLog('Failed to refresh network information: ' + e.message, 'error');
+            } finally {
+                if (refreshBtn) {
+                    refreshBtn.disabled = false;
+                    refreshBtn.textContent = originalText || '🔄 Refresh Network';
+                }
+            }
+        }
+
+        function setWifiDebugOutput(text) {
+            const panel = document.getElementById('network-debug-panel');
+            const output = document.getElementById('wifi-debug-output');
+            const toggleBtn = document.getElementById('wifi-debug-toggle-btn');
+            if (!panel || !output || !toggleBtn) return;
+
+            output.textContent = text || 'No debug output available.';
+            panel.style.display = wifiDebugVisible ? 'block' : 'none';
+            toggleBtn.textContent = wifiDebugVisible ? 'Hide' : 'Show';
+        }
+
+        function toggleWifiDebugPanel() {
+            wifiDebugVisible = !wifiDebugVisible;
+            setWifiDebugOutput(document.getElementById('wifi-debug-output')?.textContent || '');
+        }
+
+        async function debugWifiInfo() {
+            const button = document.getElementById('debug-wifi-btn');
+            const originalText = button ? button.textContent : '';
+            if (button) {
+                button.disabled = true;
+                button.textContent = 'Debugging...';
+            }
+
+            addLog('Collecting Wi-Fi debug output...', 'info');
+
+            try {
+                const response = await fetch('/api/debug/netsh');
+                const result = await response.json();
+
+                if (!response.ok || result.error) {
+                    throw new Error(result.error || 'Failed to collect Wi-Fi debug output');
+                }
+
+                wifiDebugVisible = true;
+                const sections = [
+                    `Platform: ${result.platform || 'unknown'}`,
+                    `Command: ${result.command || 'n/a'}`,
+                    `Return code: ${result.returncode}`,
+                    `Parsed SSID: ${result.parsed_ssid || 'Not detected'}`,
+                    `Parsed method: ${result.parsed_method || 'unknown'}`,
+                    '',
+                    'STDOUT:',
+                    result.stdout || '(empty)',
+                ];
+
+                if (result.stderr) {
+                    sections.push('', 'STDERR:', result.stderr);
+                }
+
+                setWifiDebugOutput(sections.join('\n'));
+                addLog(`Wi-Fi debug captured. Parsed SSID: ${result.parsed_ssid || 'Not detected'}`, result.parsed_ssid ? 'info' : 'warning');
+            } catch (e) {
+                console.error('Error debugging Wi-Fi info:', e);
+                addLog('Failed to collect Wi-Fi debug output: ' + e.message, 'error');
+            } finally {
+                if (button) {
+                    button.disabled = false;
+                    button.textContent = originalText || '🧪 Debug Wi-Fi';
+                }
             }
         }
         
@@ -712,7 +833,13 @@
             if (info.wifi_ssid) {
                 html += '<div class="network-item"><label>SSID</label><div class="value">' + info.wifi_ssid + '</div></div>';
             } else {
-                html += '<div class="network-item"><label>SSID</label><div class="value muted">Not detected <span class="hint">(macOS: grant Location Services permission)</span></div></div>';
+                let ssidHint = 'Check that the device is connected via Wi-Fi.';
+                if ((info.os_name || '').toLowerCase() === 'darwin') {
+                    ssidHint = 'macOS: grant Location Services permission.';
+                } else if ((info.os_name || '').toLowerCase() === 'windows') {
+                    ssidHint = 'Windows: ensure Wi-Fi is connected; Ethernet/VM sessions usually expose no SSID.';
+                }
+                html += '<div class="network-item"><label>SSID</label><div class="value muted">Not detected <span class="hint">(' + ssidHint + ')</span></div></div>';
             }
             
             if (rssi !== null && rssi !== undefined) {
