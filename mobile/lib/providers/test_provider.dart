@@ -44,6 +44,10 @@ class TestProvider extends ChangeNotifier {
   int _pingCount = AppConstants.defaultPingCount;
   String _brand = '';
   String _noInternetNumber = '';
+  bool _dnsOverrideEnabled = false;
+  List<String> _customDnsServers = List<String>.from(
+    AppConstants.defaultDnsServers,
+  );
 
   StreamSubscription? _testSubscription;
   Future<void> _contributionQueue = Future.value();
@@ -65,6 +69,8 @@ class TestProvider extends ChangeNotifier {
   int get pingCount => _pingCount;
   String get brand => _brand;
   String get noInternetNumber => _noInternetNumber;
+  bool get dnsOverrideEnabled => _dnsOverrideEnabled;
+  List<String> get customDnsServers => _customDnsServers;
   ContributionSummary get contributionSummary => _contributionSummary;
   bool get isInitializing => _isInitializing;
   double get initializationProgress => _initializationProgress;
@@ -74,6 +80,39 @@ class TestProvider extends ChangeNotifier {
   double get progress {
     if (_totalSamples == 0) return 0;
     return _ttfbResults.length / _totalSamples;
+  }
+
+  /// Returns network info with DNS override applied if enabled.
+  /// Use this for contribution/export instead of raw networkInfo.
+  AppNetworkInfo? get effectiveNetworkInfo {
+    if (_networkInfo == null) return null;
+    if (!_dnsOverrideEnabled || _customDnsServers.isEmpty) {
+      return _networkInfo;
+    }
+    return AppNetworkInfo(
+      connectionType: _networkInfo!.connectionType,
+      ssid: _networkInfo!.ssid,
+      bssid: _networkInfo!.bssid,
+      ipAddress: _networkInfo!.ipAddress,
+      publicIp: _networkInfo!.publicIp,
+      isp: _networkInfo!.isp,
+      wifiRssi: _networkInfo!.wifiRssi,
+      wifiBand: _networkInfo!.wifiBand,
+      wifiChannel: _networkInfo!.wifiChannel,
+      signalThreshold: _networkInfo!.signalThreshold,
+      signalStatus: _networkInfo!.signalStatus,
+      dnsPrimary: _customDnsServers.isNotEmpty ? _customDnsServers.first : null,
+      dnsServers: _customDnsServers,
+      deviceName: _networkInfo!.deviceName,
+      deviceModel: _networkInfo!.deviceModel,
+      osName: _networkInfo!.osName,
+      osVersion: _networkInfo!.osVersion,
+      batteryLevel: _networkInfo!.batteryLevel,
+      batteryCharging: _networkInfo!.batteryCharging,
+      location: _networkInfo!.location,
+      locationPermissionGranted: _networkInfo!.locationPermissionGranted,
+      timestamp: _networkInfo!.timestamp,
+    );
   }
 
   // Initialize
@@ -162,6 +201,8 @@ class TestProvider extends ChangeNotifier {
     int? pingCount,
     String? brand,
     String? noInternetNumber,
+    bool? dnsOverrideEnabled,
+    List<String>? customDnsServers,
   }) async {
     await saveSettings(
       samplesPerTarget: samplesPerTarget ?? _samplesPerTarget,
@@ -169,6 +210,8 @@ class TestProvider extends ChangeNotifier {
       pingCount: pingCount ?? _pingCount,
       brand: brand ?? _brand,
       noInternetNumber: noInternetNumber ?? _noInternetNumber,
+      dnsOverrideEnabled: dnsOverrideEnabled ?? _dnsOverrideEnabled,
+      customDnsServers: customDnsServers ?? _customDnsServers,
     );
   }
 
@@ -178,13 +221,34 @@ class TestProvider extends ChangeNotifier {
     required int pingCount,
     required String brand,
     required String noInternetNumber,
+    bool? dnsOverrideEnabled,
+    List<String>? customDnsServers,
   }) async {
     _samplesPerTarget = samplesPerTarget;
     _delayBetweenSamples = delayBetweenSamples;
     _pingCount = pingCount;
     _brand = brand.trim();
     _noInternetNumber = noInternetNumber.trim();
+    if (dnsOverrideEnabled != null) {
+      _dnsOverrideEnabled = dnsOverrideEnabled;
+    }
+    if (customDnsServers != null) {
+      _customDnsServers = customDnsServers;
+    }
 
+    await _storageService.saveSettings(_buildSettingsPayload());
+    notifyListeners();
+  }
+
+  /// Quick setter for DNS override toggle without affecting other settings.
+  Future<void> setDnsOverride({
+    required bool enabled,
+    List<String>? customServers,
+  }) async {
+    _dnsOverrideEnabled = enabled;
+    if (customServers != null && customServers.isNotEmpty) {
+      _customDnsServers = customServers;
+    }
     await _storageService.saveSettings(_buildSettingsPayload());
     notifyListeners();
   }
@@ -213,6 +277,11 @@ class TestProvider extends ChangeNotifier {
         AppConstants.defaultPingCount;
     _brand = settings['brand']?.toString() ?? '';
     _noInternetNumber = settings['no_internet_number']?.toString() ?? '';
+    _dnsOverrideEnabled = settings['dns_override_enabled'] == true;
+    final rawDns = settings['custom_dns_servers']?.toString() ?? '';
+    _customDnsServers = rawDns.isNotEmpty
+        ? rawDns.split(RegExp(r'[,;\s]+')).where((s) => s.isNotEmpty).toList()
+        : List<String>.from(AppConstants.defaultDnsServers);
   }
 
   void _applyDefaultSettings() {
@@ -221,6 +290,8 @@ class TestProvider extends ChangeNotifier {
     _pingCount = AppConstants.defaultPingCount;
     _brand = '';
     _noInternetNumber = '';
+    _dnsOverrideEnabled = false;
+    _customDnsServers = List<String>.from(AppConstants.defaultDnsServers);
   }
 
   Map<String, dynamic> _buildSettingsPayload() {
@@ -232,8 +303,8 @@ class TestProvider extends ChangeNotifier {
       'good_ttfb_threshold': AppConstants.goodTtfbThreshold,
       'warning_ttfb_threshold': AppConstants.warningTtfbThreshold,
       'signal_threshold': AppConstants.defaultSignalThreshold,
-      'dns_override_enabled': false,
-      'custom_dns_servers': AppConstants.defaultDnsServers.join(', '),
+      'dns_override_enabled': _dnsOverrideEnabled,
+      'custom_dns_servers': _customDnsServers.join(', '),
       'brand': _brand,
       'no_internet_number': _noInternetNumber,
     };
@@ -408,27 +479,27 @@ class TestProvider extends ChangeNotifier {
       },
       'network_info': {
         'brand': _brand,
-        'device_model': _networkInfo?.deviceModel,
-        'battery_level': _networkInfo?.batteryLevel,
-        'battery_charging': _networkInfo?.batteryCharging,
-        'wifi_rssi': _networkInfo?.wifiRssi,
-        'wifi_band': _networkInfo?.wifiBand,
-        'wifi_channel': _networkInfo?.wifiChannel,
-        'dns_primary': _networkInfo?.dnsPrimary,
-        'dns_servers': _networkInfo?.dnsServers,
-        'ssid': _networkInfo?.ssid,
-        'public_ip': _networkInfo?.publicIp,
-        'isp': _networkInfo?.isp,
-        'connectivity_type': _networkInfo?.connectionType,
-        'connection_type': _networkInfo?.connectionType,
-        'ip_address': _networkInfo?.ipAddress,
+        'device_model': effectiveNetworkInfo?.deviceModel,
+        'battery_level': effectiveNetworkInfo?.batteryLevel,
+        'battery_charging': effectiveNetworkInfo?.batteryCharging,
+        'wifi_rssi': effectiveNetworkInfo?.wifiRssi,
+        'wifi_band': effectiveNetworkInfo?.wifiBand,
+        'wifi_channel': effectiveNetworkInfo?.wifiChannel,
+        'dns_primary': effectiveNetworkInfo?.dnsPrimary,
+        'dns_servers': effectiveNetworkInfo?.dnsServers,
+        'ssid': effectiveNetworkInfo?.ssid,
+        'public_ip': effectiveNetworkInfo?.publicIp,
+        'isp': effectiveNetworkInfo?.isp,
+        'connectivity_type': effectiveNetworkInfo?.connectionType,
+        'connection_type': effectiveNetworkInfo?.connectionType,
+        'ip_address': effectiveNetworkInfo?.ipAddress,
         'location': {
-          'city': _networkInfo?.location?.city,
-          'region': _networkInfo?.location?.region,
-          'country': _networkInfo?.location?.country,
-          'lat': _networkInfo?.location?.latitude,
-          'lon': _networkInfo?.location?.longitude,
-          'accuracy': _networkInfo?.location?.accuracy,
+          'city': effectiveNetworkInfo?.location?.city,
+          'region': effectiveNetworkInfo?.location?.region,
+          'country': effectiveNetworkInfo?.location?.country,
+          'lat': effectiveNetworkInfo?.location?.latitude,
+          'lon': effectiveNetworkInfo?.location?.longitude,
+          'accuracy': effectiveNetworkInfo?.location?.accuracy,
         },
       },
       'results': groupedResults.entries.map((entry) {
@@ -482,7 +553,7 @@ class TestProvider extends ChangeNotifier {
       testStartTime: testStartTime,
       testEndTime: DateTime.now(),
       allResults: _ttfbResults.where((item) => item.url == result.url).toList(),
-      networkInfo: _networkInfo,
+      networkInfo: effectiveNetworkInfo,
       brand: _brand,
       noInternetNumber: _noInternetNumber,
       sampleCount: _samplesPerTarget,
