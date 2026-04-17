@@ -13,13 +13,16 @@ class SettingsScreen extends StatefulWidget {
   State<SettingsScreen> createState() => _SettingsScreenState();
 }
 
+/// DNS mode for settings
+enum DnsMode { system, defaultGoogle, custom }
+
 class _SettingsScreenState extends State<SettingsScreen> {
   double? _draftSamplesPerTarget;
   double? _draftDelayBetweenSamples;
   double? _draftPingDuration;
   String _draftBrand = '';
   String _draftNoInternetNumber = '';
-  bool _draftDnsOverrideEnabled = false;
+  DnsMode _draftDnsMode = DnsMode.defaultGoogle;
   String _draftCustomDnsServers = '';
   bool _hasUnsavedChanges = false;
   String? _syncedSignature;
@@ -41,20 +44,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
     required int pingCount,
     required String brand,
     required String noInternetNumber,
-    required bool dnsOverrideEnabled,
+    required DnsMode dnsMode,
     required String customDnsServers,
   }) {
-    return '$samplesPerTarget|$delayBetweenSamples|$pingCount|$brand|$noInternetNumber|$dnsOverrideEnabled|$customDnsServers';
+    return '$samplesPerTarget|$delayBetweenSamples|$pingCount|$brand|$noInternetNumber|${dnsMode.name}|$customDnsServers';
+  }
+
+  /// Convert provider state to DnsMode
+  DnsMode _dnsModeFromProvider(TestProvider provider) {
+    if (!provider.dnsOverrideEnabled) {
+      return DnsMode.system;
+    }
+    // Check if current DNS matches default Google DNS
+    final currentDns = provider.customDnsServers;
+    final defaultDns = AppConstants.defaultDnsServers;
+    if (currentDns.length == defaultDns.length &&
+        currentDns.every((dns) => defaultDns.contains(dns))) {
+      return DnsMode.defaultGoogle;
+    }
+    return DnsMode.custom;
   }
 
   void _syncDraftFromProvider(TestProvider provider) {
+    final dnsMode = _dnsModeFromProvider(provider);
     final nextSignature = _buildSignature(
       samplesPerTarget: provider.samplesPerTarget,
       delayBetweenSamples: provider.delayBetweenSamples,
       pingCount: provider.pingCount,
       brand: provider.brand,
       noInternetNumber: provider.noInternetNumber,
-      dnsOverrideEnabled: provider.dnsOverrideEnabled,
+      dnsMode: dnsMode,
       customDnsServers: provider.customDnsServers.join(', '),
     );
 
@@ -77,9 +96,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
     if (_noInternetController.text != _draftNoInternetNumber) {
       _noInternetController.text = _draftNoInternetNumber;
     }
-    _draftDnsOverrideEnabled = provider.dnsOverrideEnabled;
-    _draftCustomDnsServers = provider.customDnsServers.join(', ');
-    if (_dnsController.text != _draftCustomDnsServers) {
+    _draftDnsMode = dnsMode;
+    _draftCustomDnsServers = dnsMode == DnsMode.custom
+        ? provider.customDnsServers.join(', ')
+        : '';
+    if (_draftDnsMode == DnsMode.custom &&
+        _dnsController.text != _draftCustomDnsServers) {
       _dnsController.text = _draftCustomDnsServers;
     }
     _syncedSignature = nextSignature;
@@ -92,7 +114,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     double? pingDuration,
     String? brand,
     String? noInternetNumber,
-    bool? dnsOverrideEnabled,
+    DnsMode? dnsMode,
     String? customDnsServers,
   }) {
     setState(() {
@@ -102,8 +124,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _draftPingDuration = pingDuration ?? _draftPingDuration;
       _draftBrand = brand ?? _draftBrand;
       _draftNoInternetNumber = noInternetNumber ?? _draftNoInternetNumber;
-      if (dnsOverrideEnabled != null) {
-        _draftDnsOverrideEnabled = dnsOverrideEnabled;
+      if (dnsMode != null) {
+        _draftDnsMode = dnsMode;
       }
       if (customDnsServers != null) {
         _draftCustomDnsServers = customDnsServers;
@@ -113,6 +135,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _reloadDraftFromProvider(TestProvider provider) {
+    final dnsMode = _dnsModeFromProvider(provider);
     setState(() {
       _draftSamplesPerTarget = provider.samplesPerTarget.toDouble();
       _draftDelayBetweenSamples = provider.delayBetweenSamples.toDouble();
@@ -123,15 +146,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
         pingCount: provider.pingCount,
         brand: provider.brand,
         noInternetNumber: provider.noInternetNumber,
-        dnsOverrideEnabled: provider.dnsOverrideEnabled,
+        dnsMode: dnsMode,
         customDnsServers: provider.customDnsServers.join(', '),
       );
       _draftBrand = provider.brand;
       _brandController.text = _draftBrand;
       _draftNoInternetNumber = provider.noInternetNumber;
       _noInternetController.text = _draftNoInternetNumber;
-      _draftDnsOverrideEnabled = provider.dnsOverrideEnabled;
-      _draftCustomDnsServers = provider.customDnsServers.join(', ');
+      _draftDnsMode = dnsMode;
+      _draftCustomDnsServers = dnsMode == DnsMode.custom
+          ? provider.customDnsServers.join(', ')
+          : '';
       _dnsController.text = _draftCustomDnsServers;
       _hasUnsavedChanges = false;
     });
@@ -147,9 +172,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _brandController.text = '';
       _draftNoInternetNumber = '';
       _noInternetController.text = '';
-      _draftDnsOverrideEnabled = false;
-      _draftCustomDnsServers = AppConstants.defaultDnsServers.join(', ');
-      _dnsController.text = _draftCustomDnsServers;
+      _draftDnsMode = DnsMode.defaultGoogle;
+      _draftCustomDnsServers = '';
+      _dnsController.text = '';
       _hasUnsavedChanges = true;
     });
   }
@@ -162,13 +187,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final pingDuration = (_draftPingDuration ?? provider.pingCount).toInt();
     final brand = _brandController.text.trim();
     final noInternetNumber = _noInternetController.text.trim();
-    final dnsServersText = _dnsController.text.trim();
-    final dnsServersList = dnsServersText.isNotEmpty
-        ? dnsServersText
-              .split(RegExp(r'[,;\s]+'))
-              .where((s) => s.isNotEmpty)
-              .toList()
-        : AppConstants.defaultDnsServers;
+
+    // Convert DnsMode to provider format
+    final dnsOverrideEnabled = _draftDnsMode != DnsMode.system;
+    final List<String> dnsServersList;
+    switch (_draftDnsMode) {
+      case DnsMode.system:
+        dnsServersList = [];
+      case DnsMode.defaultGoogle:
+        dnsServersList = List<String>.from(AppConstants.defaultDnsServers);
+      case DnsMode.custom:
+        final dnsServersText = _dnsController.text.trim();
+        dnsServersList = dnsServersText.isNotEmpty
+            ? dnsServersText
+                  .split(RegExp(r'[,;\s]+'))
+                  .where((s) => s.isNotEmpty)
+                  .toList()
+            : List<String>.from(AppConstants.defaultDnsServers);
+    }
 
     await provider.saveSettings(
       samplesPerTarget: samples,
@@ -176,7 +212,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       pingCount: pingDuration,
       brand: brand,
       noInternetNumber: noInternetNumber,
-      dnsOverrideEnabled: _draftDnsOverrideEnabled,
+      dnsOverrideEnabled: dnsOverrideEnabled,
       customDnsServers: dnsServersList,
     );
 
@@ -191,12 +227,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
         pingCount: pingDuration,
         brand: brand,
         noInternetNumber: noInternetNumber,
-        dnsOverrideEnabled: _draftDnsOverrideEnabled,
+        dnsMode: _draftDnsMode,
         customDnsServers: dnsServersList.join(', '),
       );
       _draftBrand = brand;
       _draftNoInternetNumber = noInternetNumber;
-      _draftCustomDnsServers = dnsServersList.join(', ');
+      if (_draftDnsMode == DnsMode.custom) {
+        _draftCustomDnsServers = dnsServersList.join(', ');
+      }
       _hasUnsavedChanges = false;
     });
 
@@ -537,29 +575,58 @@ class _SettingsScreenState extends State<SettingsScreen> {
               color: AppTheme.accentBlue,
             ),
             const SizedBox(height: 16),
-            SwitchListTile(
+            Text(
+              'DNS untuk Laporan',
+              style: Theme.of(context).textTheme.titleSmall,
+            ),
+            const SizedBox(height: 8),
+            RadioListTile<DnsMode>(
               contentPadding: EdgeInsets.zero,
-              title: const Text('DNS Override'),
-              subtitle: Text(
-                _draftDnsOverrideEnabled
-                    ? 'Gunakan custom DNS untuk laporan test'
-                    : 'Laporan akan menggunakan DNS dari system',
-              ),
-              value: _draftDnsOverrideEnabled,
+              title: const Text('DNS System (ISP)'),
+              subtitle: const Text('Gunakan DNS dari router/ISP'),
+              value: DnsMode.system,
+              groupValue: _draftDnsMode,
               onChanged: (value) {
-                _markDirty(dnsOverrideEnabled: value);
+                if (value != null) {
+                  _markDirty(dnsMode: value);
+                }
               },
             ),
-            if (_draftDnsOverrideEnabled) ...[
+            RadioListTile<DnsMode>(
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                'Google DNS (${AppConstants.defaultDnsServers.join(", ")})',
+              ),
+              subtitle: const Text('Default untuk laporan QoSMic'),
+              value: DnsMode.defaultGoogle,
+              groupValue: _draftDnsMode,
+              onChanged: (value) {
+                if (value != null) {
+                  _markDirty(dnsMode: value);
+                }
+              },
+            ),
+            RadioListTile<DnsMode>(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Custom DNS'),
+              subtitle: const Text('Atur DNS sendiri'),
+              value: DnsMode.custom,
+              groupValue: _draftDnsMode,
+              onChanged: (value) {
+                if (value != null) {
+                  _markDirty(dnsMode: value);
+                }
+              },
+            ),
+            if (_draftDnsMode == DnsMode.custom) ...[
               const SizedBox(height: 8),
               TextField(
                 controller: _dnsController,
-                decoration: InputDecoration(
+                decoration: const InputDecoration(
                   labelText: 'Custom DNS Servers',
-                  hintText: 'e.g., 8.8.8.8, 8.8.4.4',
-                  helperText:
-                      'Pisahkan dengan koma atau spasi. Default: ${AppConstants.defaultDnsServers.join(", ")}',
-                  prefixIcon: const Icon(Icons.dns_outlined),
+                  hintText: 'Contoh: 1.1.1.1, 1.0.0.1',
+                  helperText: 'Pisahkan dengan koma jika lebih dari satu',
+                  prefixIcon: Icon(Icons.dns_outlined),
                 ),
                 onChanged: (value) {
                   _markDirty(customDnsServers: value);
@@ -568,9 +635,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ],
             const SizedBox(height: 12),
             Text(
-              _draftDnsOverrideEnabled
-                  ? 'Custom DNS akan dipakai di laporan QoSMic. System DNS tetap digunakan untuk koneksi.'
-                  : 'DNS system dari ISP akan dilaporkan ke QoSMic.',
+              _draftDnsMode == DnsMode.system
+                  ? 'DNS system dari ISP akan dilaporkan ke QoSMic.'
+                  : 'DNS override akan dipakai di laporan QoSMic. System DNS tetap digunakan untuk koneksi.',
               style: Theme.of(
                 context,
               ).textTheme.bodySmall?.copyWith(color: AppTheme.textSecondary),
