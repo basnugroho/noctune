@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:fl_chart/fl_chart.dart';
@@ -31,6 +33,10 @@ class _TtfbTestScreenState extends State<TtfbTestScreen> {
     }
   }
 
+  Future<void> _startTtfbWithDisclosure(TestProvider provider) async {
+    await provider.startTtfbTest();
+  }
+
   @override
   Widget build(BuildContext context) {
     return Consumer<TestProvider>(
@@ -40,6 +46,16 @@ class _TtfbTestScreenState extends State<TtfbTestScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              _NetworkMetadataBanner(
+                networkInfo:
+                    provider.effectiveNetworkInfo ?? provider.networkInfo,
+                showManualWifiBandPicker: provider.shouldPromptManualWifiBand,
+                selectedWifiBand: provider.manualWifiBandOverride,
+                onWifiBandChanged: provider.setManualWifiBandOverride,
+                onRefresh: () => _refreshMetadata(provider),
+              ),
+              const SizedBox(height: 16),
+
               // Network Info Card
               _buildNetworkInfoCard(provider),
               const SizedBox(height: 16),
@@ -71,6 +87,43 @@ class _TtfbTestScreenState extends State<TtfbTestScreen> {
         );
       },
     );
+  }
+
+  Future<void> _refreshMetadata(TestProvider provider) async {
+    if (provider.networkInfo?.locationPermissionGranted != true) {
+      final allowed = await _showMetadataDisclosure();
+      if (!allowed || !mounted) {
+        return;
+      }
+    }
+
+    await provider.refreshNetworkInfo();
+  }
+
+  Future<bool> _showMetadataDisclosure() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) {
+        return AlertDialog(
+          title: const Text('Izinkan Metadata Jaringan'),
+          content: const Text(
+            'NOCTune akan meminta izin lokasi saat app digunakan agar iPhone bisa menampilkan nama Wi-Fi (SSID) dan lokasi hasil pengujian. Izin ini hanya digunakan ketika Anda me-refresh metadata atau menjalankan tes.',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Nanti'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Lanjutkan'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
   }
 
   Widget _buildNetworkInfoCard(TestProvider provider) {
@@ -302,6 +355,7 @@ class _TtfbTestScreenState extends State<TtfbTestScreen> {
 
   Widget _buildActionButton(TestProvider provider) {
     final isRunning = provider.status == TestStatus.running;
+    final isPaused = provider.canResumeTtfb;
 
     return Column(
       children: [
@@ -328,14 +382,30 @@ class _TtfbTestScreenState extends State<TtfbTestScreen> {
           child: ElevatedButton.icon(
             onPressed: isRunning
                 ? provider.stopTest
+                : isPaused
+                ? provider.resumePausedTest
                 : provider.targetUrls.isNotEmpty
-                ? provider.startTtfbTest
+                ? () => _startTtfbWithDisclosure(provider)
                 : null,
-            icon: Icon(isRunning ? Icons.stop : Icons.play_arrow),
-            label: Text(isRunning ? 'Stop Test' : 'Run Test'),
+            icon: Icon(
+              isRunning
+                  ? Icons.stop
+                  : isPaused
+                  ? Icons.play_circle_fill
+                  : Icons.play_arrow,
+            ),
+            label: Text(
+              isRunning
+                  ? 'Stop Test'
+                  : isPaused
+                  ? 'Resume Test'
+                  : 'Run Test',
+            ),
             style: ElevatedButton.styleFrom(
               backgroundColor: isRunning
                   ? AppTheme.accentRed
+                  : isPaused
+                  ? AppTheme.accentGreen
                   : AppTheme.accentBlue,
             ),
           ),
@@ -639,6 +709,153 @@ class _TtfbTestScreenState extends State<TtfbTestScreen> {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+class _NetworkMetadataBanner extends StatelessWidget {
+  final AppNetworkInfo? networkInfo;
+  final VoidCallback onRefresh;
+  final bool showManualWifiBandPicker;
+  final String? selectedWifiBand;
+  final ValueChanged<String?> onWifiBandChanged;
+
+  const _NetworkMetadataBanner({
+    required this.networkInfo,
+    required this.onRefresh,
+    required this.showManualWifiBandPicker,
+    required this.selectedWifiBand,
+    required this.onWifiBandChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final location = networkInfo?.location;
+    final locationText = [
+      location?.city,
+      location?.region,
+      location?.country,
+    ].whereType<String>().where((item) => item.isNotEmpty).join(', ');
+
+    final batteryText = networkInfo?.batteryLevel != null
+        ? '${networkInfo!.batteryLevel}%${networkInfo?.batteryCharging == true ? ' • charging' : ''}'
+        : 'Unknown';
+
+    final deviceText =
+        networkInfo?.deviceModel ?? networkInfo?.deviceName ?? 'Unknown';
+    final ssidText = networkInfo?.ssid ?? 'Belum diizinkan';
+    final wifiBandText = networkInfo?.wifiBand?.isNotEmpty == true
+        ? networkInfo!.wifiBand!
+        : (showManualWifiBandPicker ? 'Pilih manual' : 'Belum tersedia');
+    final locationLabel = locationText.isNotEmpty
+        ? locationText
+        : 'Belum diizinkan';
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.perm_device_information,
+                  color: AppTheme.accentBlue,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    'Konfirmasi Metadata',
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                ),
+                IconButton(
+                  onPressed: onRefresh,
+                  tooltip: 'Refresh metadata',
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                _MetadataChip(label: 'Device', value: deviceText),
+                _MetadataChip(label: 'SSID', value: ssidText),
+                _MetadataChip(label: 'Wi-Fi Band', value: wifiBandText),
+                _MetadataChip(label: 'Battery', value: batteryText),
+                _MetadataChip(label: 'Location', value: locationLabel),
+              ],
+            ),
+            if (showManualWifiBandPicker) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                key: ValueKey<String?>(selectedWifiBand),
+                initialValue: selectedWifiBand,
+                decoration: const InputDecoration(
+                  labelText: 'Wi-Fi Band (isi manual di iPhone)',
+                  helperText:
+                      'Pilih band router yang sedang dipakai agar metadata contribution lebih akurat.',
+                ),
+                items: TestProvider.iosWifiBandOptions
+                    .map(
+                      (band) => DropdownMenuItem<String>(
+                        value: band,
+                        child: Text(band),
+                      ),
+                    )
+                    .toList(),
+                onChanged: onWifiBandChanged,
+              ),
+            ],
+            const SizedBox(height: 10),
+            Text(
+              Platform.isIOS && showManualWifiBandPicker
+                  ? 'Di iPhone, band Wi-Fi belum tersedia dari API publik Apple, jadi nilai ini bisa Anda isi manual dan akan ikut terbawa saat hasil test dikirim.'
+                  : networkInfo?.locationPermissionGranted == true
+                  ? 'Metadata ini akan ikut terbawa saat hasil test dikirim.'
+                  : 'Di iPhone, SSID dan lokasi baru tampil setelah izin lokasi saat app digunakan diberikan.',
+              style: const TextStyle(
+                fontSize: 12,
+                color: AppTheme.textSecondary,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _MetadataChip extends StatelessWidget {
+  final String label;
+  final String value;
+
+  const _MetadataChip({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: AppTheme.secondaryDark,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.borderColor),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            label,
+            style: const TextStyle(fontSize: 11, color: AppTheme.textSecondary),
+          ),
+          const SizedBox(height: 2),
+          Text(value, style: const TextStyle(fontWeight: FontWeight.w600)),
+        ],
       ),
     );
   }

@@ -6,6 +6,8 @@ class StorageService {
   static const String _settingsKey = 'test_settings';
   static const String _historyKey = 'test_history';
   static const String _autoContributeKey = 'auto_contribute';
+  static const String _dailyReminderEnabledKey = 'daily_ttfb_reminder_enabled';
+  static const String _pausedSessionKey = 'paused_test_session';
 
   late SharedPreferences _prefs;
 
@@ -61,7 +63,7 @@ class StorageService {
         'good_ttfb_threshold': 600,
         'warning_ttfb_threshold': 800,
         'signal_threshold': -65,
-        'dns_override_enabled': false,
+        'dns_override_enabled': true,
         'custom_dns_servers': '8.8.8.8, 8.8.4.4',
         'brand': '',
         'no_internet_number': '',
@@ -81,6 +83,30 @@ class StorageService {
 
   Future<void> setAutoContribute(bool value) async {
     await _prefs.setBool(_autoContributeKey, value);
+  }
+
+  Future<bool> getDailyReminderEnabled() async {
+    return _prefs.getBool(_dailyReminderEnabledKey) ?? false;
+  }
+
+  Future<void> setDailyReminderEnabled(bool value) async {
+    await _prefs.setBool(_dailyReminderEnabledKey, value);
+  }
+
+  Future<Map<String, dynamic>?> getPausedSession() async {
+    final data = _prefs.getString(_pausedSessionKey);
+    if (data == null || data.isEmpty) {
+      return null;
+    }
+    return jsonDecode(data) as Map<String, dynamic>;
+  }
+
+  Future<void> savePausedSession(Map<String, dynamic> session) async {
+    await _prefs.setString(_pausedSessionKey, jsonEncode(session));
+  }
+
+  Future<void> clearPausedSession() async {
+    await _prefs.remove(_pausedSessionKey);
   }
 
   // Test History

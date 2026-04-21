@@ -9,6 +9,7 @@ class PingService {
     required int count,
     Duration interval = const Duration(seconds: 1),
     Duration timeout = const Duration(seconds: 5),
+    int startSequence = 1,
   }) async* {
     final ping = Ping(
       host,
@@ -17,7 +18,7 @@ class PingService {
       timeout: timeout.inSeconds,
     );
 
-    int sequence = 0;
+    int sequence = startSequence - 1;
 
     await for (final response in ping.stream) {
       sequence++;

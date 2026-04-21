@@ -1,6 +1,7 @@
 # Virtual Environment
 venv/
 .venv/
+.venv-macos-x86_64/
 env/
 .env/
 .env
@@ -49,6 +50,8 @@ notebooks/precise_location.json
 build/
 dist/
 releases/
+*.apk
+*.aab
 *.dmg
 *.exe
 *.AppImage

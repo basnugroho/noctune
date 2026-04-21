@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:convert';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:geocoding/geocoding.dart';
 import 'package:geolocator/geolocator.dart';
@@ -67,9 +68,14 @@ class NetworkInfoService {
             bssid = await _networkInfo.getWifiBSSID();
           }
         } else {
-          locationPermissionGranted = true;
-          ssid = await _networkInfo.getWifiName();
-          bssid = await _networkInfo.getWifiBSSID();
+          locationPermissionGranted = await _hasLocationPermission(
+            requestPermissions: requestPermissions,
+          );
+          if (locationPermissionGranted) {
+            final wifiIdentity = await _readWifiIdentity();
+            ssid = wifiIdentity.$1;
+            bssid = wifiIdentity.$2;
+          }
         }
 
         // Clean SSID (remove quotes if present)
@@ -94,6 +100,15 @@ class NetworkInfoService {
       locationPermissionGranted =
           locationPermissionGranted || locationPayload.permissionGranted;
       locationInfo = locationPayload.location;
+
+      if (connectivityResult == ConnectivityResult.wifi &&
+          locationPermissionGranted &&
+          (ssid == null || ssid.isEmpty)) {
+        final wifiIdentity = await _readWifiIdentity();
+        ssid = wifiIdentity.$1 ?? ssid;
+        bssid = wifiIdentity.$2 ?? bssid;
+      }
+
       if (locationInfo == null &&
           (fallbackCity != null ||
               fallbackRegion != null ||
@@ -115,6 +130,8 @@ class NetworkInfoService {
       deviceModel = deviceContext.deviceModel;
       osName = deviceContext.osName;
       osVersion = deviceContext.osVersion;
+      ssid = deviceContext.ssid ?? ssid;
+      bssid = deviceContext.bssid ?? bssid;
       connectionType = _preferConnectivityType(
         nativeType: deviceContext.connectivityType,
         flutterType: connectionType,
@@ -126,6 +143,19 @@ class NetworkInfoService {
       wifiChannel = deviceContext.wifiChannel;
       dnsServers = deviceContext.dnsServers;
       dnsPrimary = deviceContext.dnsPrimary;
+
+      if (Platform.isIOS &&
+          connectionType == 'WiFi' &&
+          wifiBand == null &&
+          ((ssid != null && ssid.isNotEmpty) || wifiRssi != null)) {
+        wifiBand = 'Unavailable (iOS API limit)';
+      }
+
+      debugPrint(
+        'Network info snapshot: os=$osName, deviceModel=$deviceModel, '
+        'ssid=$ssid, batteryLevel=$batteryLevel, wifiBand=$wifiBand, '
+        'locationCity=${locationInfo?.city}, locationLat=${locationInfo?.latitude}',
+      );
 
       if ((connectionType == null || connectionType == 'Unknown') &&
           ((ssid != null && ssid.isNotEmpty) || wifiRssi != null)) {
@@ -259,11 +289,13 @@ class NetworkInfoService {
         location: AppLocationInfo(
           latitude: position.latitude,
           longitude: position.longitude,
-          accuracy: position.accuracy,
+          accuracy: _sanitizeNonNegativeDouble(position.accuracy),
           altitude: position.altitude,
-          altitudeAccuracy: position.altitudeAccuracy,
-          heading: position.heading,
-          speed: position.speed,
+          altitudeAccuracy: _sanitizeNonNegativeDouble(
+            position.altitudeAccuracy,
+          ),
+          heading: _sanitizeHeading(position.heading),
+          speed: _sanitizeNonNegativeDouble(position.speed),
           city: city,
           region: region,
           country: country,
@@ -277,6 +309,56 @@ class NetworkInfoService {
     } catch (_) {
       return const _LocationPayload(permissionGranted: false);
     }
+  }
+
+  Future<bool> _hasLocationPermission({
+    required bool requestPermissions,
+  }) async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        return false;
+      }
+
+      LocationPermission permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied && requestPermissions) {
+        permission = await Geolocator.requestPermission();
+      }
+
+      return permission == LocationPermission.always ||
+          permission == LocationPermission.whileInUse;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<(String?, String?)> _readWifiIdentity() async {
+    try {
+      final wifiName = await _networkInfo.getWifiName();
+      final wifiBssid = await _networkInfo.getWifiBSSID();
+      final cleanedName = wifiName?.replaceAll('"', '');
+      return (cleanedName, wifiBssid);
+    } catch (_) {
+      return (null, null);
+    }
+  }
+
+  double? _sanitizeNonNegativeDouble(double value) {
+    if (value.isNaN || value.isInfinite || value < 0) {
+      return null;
+    }
+    return value;
+  }
+
+  double? _sanitizeHeading(double value) {
+    if (value.isNaN || value.isInfinite || value < 0) {
+      return null;
+    }
+
+    if (value >= 360) {
+      return value % 360;
+    }
+
+    return value;
   }
 
   Future<_PublicIpProfile> _getPublicIpProfile() async {
@@ -315,14 +397,6 @@ class NetworkInfoService {
   }
 
   Future<_DeviceContext> _getDeviceContext() async {
-    if (!Platform.isAndroid) {
-      return _DeviceContext(
-        deviceName: Platform.operatingSystem,
-        osName: Platform.operatingSystem,
-        osVersion: Platform.operatingSystemVersion,
-      );
-    }
-
     try {
       final result = await _deviceChannel.invokeMapMethod<String, dynamic>(
         'getDeviceContext',
@@ -339,6 +413,8 @@ class NetworkInfoService {
         connectivityType: result['connectivityType']?.toString(),
         batteryLevel: (result['batteryLevel'] as num?)?.toInt(),
         batteryCharging: result['batteryCharging'] as bool?,
+        ssid: result['ssid']?.toString(),
+        bssid: result['bssid']?.toString(),
         wifiRssi: (result['wifiRssi'] as num?)?.toInt(),
         wifiBand: result['wifiBand']?.toString(),
         wifiChannel: (result['wifiChannel'] as num?)?.toInt(),
@@ -349,7 +425,11 @@ class NetworkInfoService {
             .toList(),
       );
     } catch (_) {
-      return const _DeviceContext();
+      return _DeviceContext(
+        deviceName: Platform.operatingSystem,
+        osName: Platform.operatingSystem,
+        osVersion: Platform.operatingSystemVersion,
+      );
     }
   }
 
@@ -478,6 +558,8 @@ class _DeviceContext {
   final String? connectivityType;
   final int? batteryLevel;
   final bool? batteryCharging;
+  final String? ssid;
+  final String? bssid;
   final int? wifiRssi;
   final String? wifiBand;
   final int? wifiChannel;
@@ -492,6 +574,8 @@ class _DeviceContext {
     this.connectivityType,
     this.batteryLevel,
     this.batteryCharging,
+    this.ssid,
+    this.bssid,
     this.wifiRssi,
     this.wifiBand,
     this.wifiChannel,

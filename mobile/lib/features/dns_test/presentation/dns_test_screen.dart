@@ -27,10 +27,11 @@ class _DnsTestScreenState extends State<DnsTestScreen> {
     super.dispose();
   }
 
-  void _runLookup(TestProvider provider) {
+  Future<void> _runLookup(TestProvider provider) async {
     final domain = _domainController.text.trim();
     if (domain.isNotEmpty) {
-      provider.dnsLookup(domain);
+      await provider.refreshNetworkInfo();
+      await provider.dnsLookup(domain);
     }
   }
 
@@ -38,6 +39,7 @@ class _DnsTestScreenState extends State<DnsTestScreen> {
   Widget build(BuildContext context) {
     return Consumer<TestProvider>(
       builder: (context, provider, child) {
+        final isPaused = provider.canResumeDns;
         return SingleChildScrollView(
           padding: const EdgeInsets.all(16),
           child: Column(
@@ -60,7 +62,9 @@ class _DnsTestScreenState extends State<DnsTestScreen> {
                           hintText: 'e.g., google.com or https://google.com',
                           prefixIcon: Icon(Icons.dns),
                         ),
-                        onSubmitted: (_) => _runLookup(provider),
+                        onSubmitted: (_) {
+                          _runLookup(provider);
+                        },
                       ),
 
                       const SizedBox(height: 16),
@@ -70,6 +74,8 @@ class _DnsTestScreenState extends State<DnsTestScreen> {
                         child: ElevatedButton.icon(
                           onPressed: provider.status == TestStatus.running
                               ? null
+                              : isPaused
+                              ? provider.resumePausedTest
                               : () => _runLookup(provider),
                           icon: provider.status == TestStatus.running
                               ? const SizedBox(
@@ -80,10 +86,14 @@ class _DnsTestScreenState extends State<DnsTestScreen> {
                                     color: Colors.white,
                                   ),
                                 )
+                              : isPaused
+                              ? const Icon(Icons.play_circle_fill)
                               : const Icon(Icons.search),
                           label: Text(
                             provider.status == TestStatus.running
                                 ? 'Looking up...'
+                                : isPaused
+                                ? 'Resume Lookup'
                                 : 'Lookup',
                           ),
                         ),
@@ -116,9 +126,9 @@ class _DnsTestScreenState extends State<DnsTestScreen> {
                             ].map((domain) {
                               return ActionChip(
                                 label: Text(domain),
-                                onPressed: () {
+                                onPressed: () async {
                                   _domainController.text = domain;
-                                  _runLookup(provider);
+                                  await _runLookup(provider);
                                 },
                               );
                             }).toList(),

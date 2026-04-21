@@ -32,8 +32,9 @@ class TtfbResult {
   ResultQuality get quality {
     if (error != null) return ResultQuality.poor;
     if (ttfbMs <= AppConstants.goodTtfbThreshold) return ResultQuality.good;
-    if (ttfbMs <= AppConstants.warningTtfbThreshold)
+    if (ttfbMs <= AppConstants.warningTtfbThreshold) {
       return ResultQuality.warning;
+    }
     return ResultQuality.poor;
   }
 
@@ -108,8 +109,9 @@ class TtfbTestSummary {
 
   ResultQuality get overallQuality {
     if (avgTtfb <= AppConstants.goodTtfbThreshold) return ResultQuality.good;
-    if (avgTtfb <= AppConstants.warningTtfbThreshold)
+    if (avgTtfb <= AppConstants.warningTtfbThreshold) {
       return ResultQuality.warning;
+    }
     return ResultQuality.poor;
   }
 }
@@ -142,6 +144,18 @@ class DnsResult {
     'timestamp': timestamp.toIso8601String(),
     'error': error,
   };
+
+  factory DnsResult.fromJson(Map<String, dynamic> json) => DnsResult(
+    domain: json['domain'],
+    queryType: json['query_type'],
+    answers: (json['answers'] as List<dynamic>? ?? const [])
+        .map((item) => item.toString())
+        .toList(),
+    responseTimeMs: (json['response_time_ms'] as num).toDouble(),
+    dnsServer: json['dns_server'],
+    timestamp: DateTime.parse(json['timestamp']),
+    error: json['error'],
+  );
 }
 
 class PingResult {
@@ -169,6 +183,15 @@ class PingResult {
     'timestamp': timestamp.toIso8601String(),
     'error': error,
   };
+
+  factory PingResult.fromJson(Map<String, dynamic> json) => PingResult(
+    host: json['host'],
+    sequenceNumber: json['sequence'],
+    latencyMs: (json['latency_ms'] as num).toDouble(),
+    ttl: json['ttl'],
+    timestamp: DateTime.parse(json['timestamp']),
+    error: json['error'],
+  );
 }
 
 class PingTestSummary {

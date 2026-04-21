@@ -30,6 +30,7 @@
     "appId": "id.solusee.noctune",
     "productName": "NOC Tune",
     "artifactName": "NOC-Tune-${version}-${os}-${arch}.${ext}",
+    "afterPack": "scripts/after-pack.js",
     "directories": {
       "output": "dist",
       "buildResources": "resources"
@@ -54,8 +55,8 @@
     "mac": {
       "extraResources": [
         {
-          "from": "../dist/noctune-backend",
-          "to": "backend/noctune-backend"
+            "from": "../dist/noctune-backend-arm64",
+            "to": "backend/noctune-backend"
         }
       ],
       "category": "public.app-category.utilities",

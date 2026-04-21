@@ -4,7 +4,8 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+ELECTRON_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$ELECTRON_DIR")"
 
 echo "=== NOC Tune Build Script ==="
 echo "Project root: $PROJECT_ROOT"
@@ -33,6 +34,12 @@ check_deps() {
 # Build Python backend with PyInstaller
 build_backend() {
     info "Building Python backend..."
+
+    if [ "$(uname -s)" = "Darwin" ]; then
+        build_backend_macos
+        info "Backend built successfully"
+        return
+    fi
     
     cd "$PROJECT_ROOT"
     
@@ -54,10 +61,49 @@ build_backend() {
 install_electron_deps() {
     info "Installing Electron dependencies..."
     
-    cd "$PROJECT_ROOT/electron"
+    cd "$ELECTRON_DIR"
     npm install
     
     info "Electron dependencies installed"
+}
+
+build_backend_macos_arch() {
+    local backend_arch="$1"
+    local python_bin="$2"
+    local output_name="$3"
+
+    [ -x "$python_bin" ] || error "Required Python not found: $python_bin"
+
+    info "Building macOS backend for ${backend_arch}..."
+
+    cd "$PROJECT_ROOT"
+
+    local venv_dir=".venv-macos-${backend_arch}"
+    if [ ! -d "$venv_dir" ]; then
+        "$python_bin" -m venv "$venv_dir"
+    fi
+
+    # shellcheck disable=SC1090
+    source "$venv_dir/bin/activate"
+
+    python -m pip install --upgrade pip setuptools wheel
+    python -m pip install pyinstaller dnspython
+    python -m pip install pyobjc-framework-CoreWLAN
+
+    rm -f "dist/${output_name}"
+    pyinstaller --clean --noconfirm noctune-backend.spec --distpath dist --workpath "build/pyinstaller-${backend_arch}" --target-arch "$backend_arch"
+    mv -f dist/noctune-backend "dist/${output_name}"
+
+    deactivate
+
+    info "macOS backend ready: dist/${output_name}"
+}
+
+build_backend_macos() {
+    build_backend_macos_arch arm64 /opt/homebrew/bin/python3 noctune-backend-arm64
+    build_backend_macos_arch x86_64 /usr/local/bin/python3 noctune-backend-x64
+
+    cp -f dist/noctune-backend-arm64 dist/noctune-backend
 }
 
 # Build Electron app
@@ -66,7 +112,7 @@ build_electron() {
     
     info "Building Electron app for $platform..."
     
-    cd "$PROJECT_ROOT/electron"
+    cd "$ELECTRON_DIR"
     
     case "$platform" in
         darwin|mac|macos)
@@ -86,7 +132,6 @@ build_electron() {
     info "Electron app built successfully"
 }
 
-# Main build
 build_all() {
     check_deps
     build_backend
@@ -95,8 +140,8 @@ build_all() {
     
     echo ""
     info "=== Build Complete ==="
-    info "Output: $PROJECT_ROOT/electron/dist/"
-    ls -la "$PROJECT_ROOT/electron/dist/" 2>/dev/null || true
+    info "Output: $ELECTRON_DIR/dist/"
+    ls -la "$ELECTRON_DIR/dist/" 2>/dev/null || true
 }
 
 # Parse arguments

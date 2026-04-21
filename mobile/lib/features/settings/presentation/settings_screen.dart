@@ -693,6 +693,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
             const Divider(),
 
+            SwitchListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Daily 19:00 Reminder'),
+              subtitle: const Text(
+                'Kirim pengingat lokal setiap jam 19:00 waktu device: "Sudahkah anda lakukan TTFB hari ini? Yuk! Tes dulu!"',
+              ),
+              value: provider.dailyReminderEnabled,
+              onChanged: (value) async {
+                await provider.setDailyReminderEnabled(value);
+                if (!context.mounted) {
+                  return;
+                }
+
+                final message = provider.dailyReminderEnabled
+                    ? 'Daily reminder aktif untuk jam 19:00 waktu lokal'
+                    : value
+                    ? 'Izin notifikasi belum diberikan, reminder tidak diaktifkan'
+                    : 'Daily reminder dimatikan';
+
+                ScaffoldMessenger.of(
+                  context,
+                ).showSnackBar(SnackBar(content: Text(message)));
+              },
+            ),
+
+            const Divider(),
+
             ListTile(
               contentPadding: EdgeInsets.zero,
               leading: const Icon(

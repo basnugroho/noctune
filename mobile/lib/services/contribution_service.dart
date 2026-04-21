@@ -61,7 +61,10 @@ class ContributionService {
     debugPrint(
       'Contribution request: connectivity_type=${cleanedRow['connectivity_type']}, '
       'url=${cleanedRow['url']}, sample_num=${cleanedRow['sample_num']}, '
-      'session_id=${cleanedRow['session_id']}',
+      'session_id=${cleanedRow['session_id']}, '
+      'ssid=${cleanedRow['wifi_ssid']}, battery=${cleanedRow['battery_level']}, '
+      'wifi_band=${cleanedRow['wifi_band']}, location_city=${cleanedRow['location_city']}, '
+      'location_lat=${cleanedRow['location_lat']}',
     );
 
     for (int attempt = 0; attempt < _retryBackoff.length; attempt++) {
@@ -188,6 +191,7 @@ class ContributionService {
     );
     final cleanedBrand = brand.trim();
     final cleanedNoInternet = noInternetNumber.trim();
+    final sanitizedHeading = _sanitizeLocationHeading(location?.heading);
 
     return {
       'session_id': sessionId,
@@ -209,15 +213,20 @@ class ContributionService {
       'http_code': result.statusCode,
       'status': _qualityToStatus(result.quality),
       'error': result.error,
-      'device_name': networkInfo?.deviceName ?? 'Android',
+      'device_name':
+          networkInfo?.deviceName ??
+          networkInfo?.osName ??
+          Platform.operatingSystem,
       'device_model': networkInfo?.deviceModel,
-      'os_name': networkInfo?.osName ?? 'Android',
+      'os_name': networkInfo?.osName ?? Platform.operatingSystem,
       'os_version': networkInfo?.osVersion,
       'battery_level': networkInfo?.batteryLevel,
       'battery_charging': networkInfo?.batteryCharging,
       'wifi_ssid': networkInfo?.ssid,
       'wifi_ssid_method': networkInfo?.ssid != null
-          ? 'network_info_plus'
+          ? ((networkInfo?.osName?.toLowerCase() == 'ios')
+                ? 'native_ios'
+                : 'network_info_plus')
           : 'unknown',
       'wifi_rssi': networkInfo?.wifiRssi,
       'wifi_band': networkInfo?.wifiBand,
@@ -238,7 +247,7 @@ class ContributionService {
       'location_accuracy': location?.accuracy,
       'location_altitude': location?.altitude,
       'location_altitude_accuracy': location?.altitudeAccuracy,
-      'location_heading': location?.heading,
+      'location_heading': sanitizedHeading,
       'location_speed': location?.speed,
       'location_browser_timestamp': location?.browserTimestamp != null
           ? _normalizeSqlDatetime(location!.browserTimestamp!.toIso8601String())
@@ -349,6 +358,16 @@ class ContributionService {
       }
     }
     return cleaned;
+  }
+
+  double? _sanitizeLocationHeading(double? heading) {
+    if (heading == null || heading.isNaN || heading.isInfinite || heading < 0) {
+      return null;
+    }
+    if (heading >= 360) {
+      return heading % 360;
+    }
+    return heading;
   }
 
   void dispose() {

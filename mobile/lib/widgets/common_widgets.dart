@@ -164,7 +164,7 @@ class SectionHeader extends StatelessWidget {
               context,
             ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w600),
           ),
-          if (trailing != null) trailing!,
+          ?trailing,
         ],
       ),
     );

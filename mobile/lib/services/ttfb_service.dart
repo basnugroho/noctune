@@ -111,8 +111,9 @@ class TtfbService {
     required String url,
     required int samples,
     required Duration delayBetweenSamples,
+    int startSample = 1,
   }) async* {
-    for (int i = 1; i <= samples; i++) {
+    for (int i = startSample; i <= samples; i++) {
       final result = await measureTtfb(url: url, sampleNumber: i);
       yield result;
 
@@ -127,12 +128,16 @@ class TtfbService {
     required List<String> urls,
     required int samplesPerTarget,
     required Duration delayBetweenSamples,
+    int startTargetIndex = 0,
+    int startSample = 1,
   }) async* {
-    for (final url in urls) {
+    for (int index = startTargetIndex; index < urls.length; index++) {
+      final url = urls[index];
       await for (final result in runTest(
         url: url,
         samples: samplesPerTarget,
         delayBetweenSamples: delayBetweenSamples,
+        startSample: index == startTargetIndex ? startSample : 1,
       )) {
         yield result;
       }

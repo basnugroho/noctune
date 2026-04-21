@@ -28,10 +28,11 @@ class _PingTestScreenState extends State<PingTestScreen> {
     super.dispose();
   }
 
-  void _startPing(TestProvider provider) {
+  Future<void> _startPing(TestProvider provider) async {
     final host = _hostController.text.trim();
     if (host.isNotEmpty) {
-      provider.startPingTest(host);
+      await provider.refreshNetworkInfo();
+      await provider.startPingTest(host);
     }
   }
 
@@ -40,6 +41,7 @@ class _PingTestScreenState extends State<PingTestScreen> {
     return Consumer<TestProvider>(
       builder: (context, provider, child) {
         final isRunning = provider.status == TestStatus.running;
+        final isPaused = provider.canResumePing;
         final summary = provider.getPingSummary();
 
         return SingleChildScrollView(
@@ -64,7 +66,9 @@ class _PingTestScreenState extends State<PingTestScreen> {
                           hintText: 'e.g., 8.8.8.8 or google.com',
                           prefixIcon: Icon(Icons.router),
                         ),
-                        onSubmitted: (_) => _startPing(provider),
+                        onSubmitted: (_) {
+                          _startPing(provider);
+                        },
                         enabled: !isRunning,
                       ),
 
@@ -106,12 +110,28 @@ class _PingTestScreenState extends State<PingTestScreen> {
                         child: ElevatedButton.icon(
                           onPressed: isRunning
                               ? provider.stopTest
+                              : isPaused
+                              ? provider.resumePausedTest
                               : () => _startPing(provider),
-                          icon: Icon(isRunning ? Icons.stop : Icons.play_arrow),
-                          label: Text(isRunning ? 'Stop' : 'Start Ping'),
+                          icon: Icon(
+                            isRunning
+                                ? Icons.stop
+                                : isPaused
+                                ? Icons.play_circle_fill
+                                : Icons.play_arrow,
+                          ),
+                          label: Text(
+                            isRunning
+                                ? 'Stop'
+                                : isPaused
+                                ? 'Resume Ping'
+                                : 'Start Ping',
+                          ),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: isRunning
                                 ? AppTheme.accentRed
+                                : isPaused
+                                ? AppTheme.accentGreen
                                 : AppTheme.accentBlue,
                           ),
                         ),

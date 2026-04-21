@@ -52,7 +52,7 @@ class MainScreen extends StatefulWidget {
   State<MainScreen> createState() => _MainScreenState();
 }
 
-class _MainScreenState extends State<MainScreen> {
+class _MainScreenState extends State<MainScreen> with WidgetsBindingObserver {
   int _currentIndex = 0;
 
   final List<Widget> _screens = [
@@ -68,6 +68,26 @@ class _MainScreenState extends State<MainScreen> {
     'DNS Lookup',
     'Settings',
   ];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (!mounted) {
+      return;
+    }
+    context.read<TestProvider>().handleAppLifecycleState(state);
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -112,7 +132,72 @@ class _MainScreenState extends State<MainScreen> {
               ),
             ],
           ),
-          body: IndexedStack(index: _currentIndex, children: _screens),
+          body: Column(
+            children: [
+              if (provider.showKeepAppOpenNotice)
+                Container(
+                  width: double.infinity,
+                  margin: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: provider.hasPausedTest
+                        ? AppTheme.accentRed.withOpacity(0.12)
+                        : AppTheme.accentBlue.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: provider.hasPausedTest
+                          ? AppTheme.accentRed.withOpacity(0.3)
+                          : AppTheme.accentBlue.withOpacity(0.3),
+                    ),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        provider.hasPausedTest
+                            ? Icons.pause_circle
+                            : Icons.warning_amber_rounded,
+                        color: provider.hasPausedTest
+                            ? AppTheme.accentRed
+                            : AppTheme.accentBlue,
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              provider.hasPausedTest
+                                  ? 'Tes Dipause'
+                                  : 'Jangan Tutup App',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              provider.keepAppOpenNotice,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                color: AppTheme.textSecondary,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      if (provider.hasPausedTest)
+                        TextButton(
+                          onPressed: provider.resumePausedTest,
+                          child: const Text('Resume'),
+                        ),
+                    ],
+                  ),
+                ),
+              Expanded(
+                child: IndexedStack(index: _currentIndex, children: _screens),
+              ),
+            ],
+          ),
           bottomNavigationBar: NavigationBar(
             selectedIndex: _currentIndex,
             onDestinationSelected: (index) {
